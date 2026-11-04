@@ -25,6 +25,7 @@ Both presets run with `danger-full-access` as the operator's OS user and read me
 - A repository on github.com; GitHub Enterprise Server is not supported. To create a checkout per Ticket, keep a local clone from which the prepare command can add worktrees. Install `git-lfs` if that repository uses Git LFS.
 - A model provider configured for DeepSeek Harness. dsh-superagent uses the profile's default model unless the Eval or Execution settings name another.
 - For Feishu: `lark-cli` (tested with 1.0.90) and a Feishu or Lark app with a bot
+- For Codex or Claude Code workers: install a `dsh-harness-provider` build with managed-session support in this same Profile and configure its CLI. Select the worker Harness in Settings → Execution; leave the main Session on DSH. External workers have the same full-access execution policy. Existing Tickets keep their original Harness. Missing provider support fails an external Ticket explicitly rather than running it natively.
 
 ## Accounts
 

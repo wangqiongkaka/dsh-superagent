@@ -70,7 +70,7 @@ export interface ExecutorHost {
   readonly machine: Pick<Machine, 'stateDir'>
   readonly lifetime: AbortSignal
   /** Session manager for worker sessions and for relaying worker reports to the main Session. */
-  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds'>
+  readonly sessions: Pick<Sessions, 'ensure' | 'prompt' | 'promptedId' | 'relay' | 'holds' | 'endWorker'>
   closing(): boolean
   /** Whether processing is paused, which holds launches and input deliveries. */
   paused(): boolean
@@ -107,7 +107,8 @@ export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutco
   const assignment = ticket.mandate.strength === 'inferred' && ruleIds
     ? `Proactively accepted under ${ruleIds.join(', ')}. Scope: ${outcome.scope}.${precedence}${note}`
     : note.trim()
-  return { name, directory: join(executionRoot(settings, stateDir), name), assignment }
+  return { name, directory: join(executionRoot(settings, stateDir), name), assignment,
+    ...(settings.executor.harness === 'dsh' ? {} : { harness: settings.executor.harness }) }
 }
 /** Character limits for inline assignment and trigger text in worker messages; longer text is read via its resource. */
 const ASSIGNMENT_CHARS = 1500, TRIGGER_CHARS = 600
@@ -311,7 +312,7 @@ export class DshExecutor implements Executor {
         const input = ticket.inputs.find(item => item.id === inputId)
         try {
           // Recreate the worker session if it was externally deleted.
-          if (!this.host.context.agents.get(sessionId as SessionId)) {
+          if (!this.host.context.agents.get(sessionId as SessionId) || (ticket.execution?.harness && ticket.execution.harness !== 'dsh')) {
             await this.host.sessions.ensure(sessionId, ticket.execution?.directory ?? '', ticket.title, 'worker')
           }
           if (input) await this.deliverInput(ticket, assignment, input)
@@ -365,6 +366,7 @@ export class DshExecutor implements Executor {
       if (!ownTurn) this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
       // Its shell jobs and subagents stop with it, also those of a worker that ends its own turn.
       this.stopWork(ticket.id, reason)
+      this.track(ticket.id, this.host.sessions.endWorker(sessionId, assignment.id, ownTurn))
       this.left.get(ticket.id)?.collect.abort(); this.left.delete(ticket.id); this.personal.delete(ticket.id)
     })
   }
@@ -438,10 +440,10 @@ export class DshExecutor implements Executor {
     }
     if (!current()) return
     const sessionId = workerSessionId(ticket.id)
-    const agent = await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
-    if (!current()) return
     // The background work of the Assignment this one replaces stops first, so its end does not clear this one's message.
     await this.stopped(ticket.id)
+    if (!current()) return
+    const agent = await this.host.sessions.ensure(sessionId, workspace, ticket.title, 'worker')
     if (!current()) return
     // A message put back for this Assignment may still wait in the Session, kept by a restart's cancel or persisted across a
     // crash, where this launch's message would take it into a step beside the copy delivered next: that copy is the only one.

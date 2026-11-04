@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { TICKET_FILTERS, type TicketFilter } from '../app/api.ts'
 import { LIMITS } from '../limits.ts'
 import { usePoll, type SettingsView, type SourceView, type StateView } from './api.ts'
-import { DisclosureRow, Icon, InfoTip, Input, Pill } from './controls.tsx'
+import { DisclosureRow, Icon, InfoTip, Input, Pill, SegmentedControl } from './controls.tsx'
 import { SaveBar } from './draft.tsx'
 import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
@@ -94,8 +94,12 @@ export function ExecutionSettings() {
       <Fields disabled={draft.busy}>
         <div className="dt-form dt-block">
           <h2 className="dt-block-title">{t('term.executor')}<InfoTip text={t('executorIntro')} /></h2>
-          <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
-            onChange={model => edit({ model })} /></Section>
+          <Field label={t('executorHarness')} hint={t('executorHarnessHint')}>
+            <SegmentedControl label={t('executorHarness')} value={value.harness} onChange={harness => edit({ harness })}
+              options={[{ value: 'dsh', label: 'DSH' }, { value: 'codex', label: 'Codex' }, { value: 'claude-code', label: 'Claude Code' }]} />
+          </Field>
+          {value.harness === 'dsh' ? <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
+            onChange={model => edit({ model })} /></Section> : <Hint>{t('externalHarnessHint')}</Hint>}
           <Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />

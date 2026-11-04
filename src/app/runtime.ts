@@ -211,6 +211,12 @@ export class Runtime extends Service implements SourceHost {
     for (const id of this.settings.syncable()) await this.settings.sync(id).catch(() => { /* sync() records its failure in health. */ })
     // If stop() was called while awaiting setup, session creation, or policy sync, do not start background loops.
     if (this.closing()) return
+    // Waiting external workers need their tools restored before a person can continue directly in their Session.
+    for (const ticket of this.store.tickets.open()) {
+      if (!ticket.execution?.harness || ticket.execution.harness === 'dsh' || ticket.assignments.at(-1)?.state !== 'running') continue
+      try { await this.sessions.ensure(workerSessionId(ticket.id), ticket.execution.directory, ticket.title, 'worker') }
+      catch (error) { this.engine.report(ticket.id, { state: 'failed', summary: `External worker recovery failed: ${String(error)}` }) }
+    }
     this.executor.resume()
     this.passes.start()
     this.effects.start()
@@ -238,6 +244,7 @@ export class Runtime extends Service implements SourceHost {
       // The workers' jobs and subagents stop too: their ends would start worker turns without the tool limits released below.
       await this.executor.shutdown()
       this.executor.dispose()
+      await this.sessions.closeExternal()
       this.sessions.dispose()
       for (const dispose of this.disposers.reverse()) dispose()
       await this.ctx.sessionPersistence.flush()

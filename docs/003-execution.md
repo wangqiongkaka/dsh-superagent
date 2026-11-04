@@ -26,6 +26,16 @@ Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory 
 
 Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
 
+### Codex and Claude Code workers
+
+Execution settings select `dsh` (the default), `codex`, or `claude-code` for **new Tickets**. The main Session always stays on DSH. A Ticket stores its Harness at acceptance and keeps it through retries, follow-ups and restarts; older Tickets without a Harness field stay on DSH.
+
+External workers require `dsh-harness-provider` with the `manageSession` API in the **same Profile**, plus a configured and authenticated CLI. They inherit that Harness's last available model and reasoning choice, use full-access permissions as native workers do, and do not change the operator's remembered Harness/model. The DSH executor-model setting applies only to native workers.
+
+The provider sends the worker prompt and operational skills as system/developer instructions, and exposes the same scoped Executor tools through a loopback MCP endpoint. A credential belongs to one Assignment, is replaced on retry and restart, and stops working when its Assignment ends. Neither credentials nor MCP connection details are stored in the Superagent database or Harness binding. An unavailable provider fails the Ticket; it never falls back to another Harness.
+
+Native CLI authentication, tools and repository instructions remain those of Codex or Claude Code. The provider projects conversation and background-job events into DSH; the existing worker slots, reports, questions and PR workflow still apply. Ending an Assignment also closes its external process, after its own final report returns. An external process is resumed with updated instructions on the next turn; if it still has background tasks, a changed context waits for those tasks to end rather than killing them.
+
 The main Session uses `dsh-superagent-router`, with the same 5-second shell and job-wait limits and a smaller tool set for routing. Sessions retain the preset selected at creation. Worker subagents use DeepSeek Harness's `standard` preset.
 
 ### Background work and worker slots

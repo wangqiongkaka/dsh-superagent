@@ -6,8 +6,9 @@ import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { dirname } from 'node:path'
 import { z } from 'zod'
-import { key, liveTicket, type Ticket } from '../core/index.ts'
+import { key, liveTicket, latestAssignment, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
+import { ExternalTools, type WorkerMcpServer } from './external-tools.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
@@ -19,6 +20,14 @@ import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
+
+/** Optional API supplied by dsh-harness-provider; older versions cannot run external workers. */
+interface HarnessBridge {
+  manageSession(id: string, options: { owner: string; harness: 'dsh' | 'codex' | 'claude-code';
+    context?: () => Promise<{ instructions: string; environment: Record<string, string | undefined>; mcpServers: WorkerMcpServer[] }> }): Promise<void>
+  releaseManagedSession(id: string, owner: string): Promise<void>
+}
+const harnessOf = (ctx: Context) => ctx.get('harness' as never) as HarnessBridge | undefined
 
 /** Host dependencies used by `Sessions`. */
 export interface SessionsHost {
@@ -95,6 +104,8 @@ export class Sessions {
   /** Decorated agents mapped to their registered disposers and skill scope until the agent is disposed or `Sessions.dispose()` runs. */
   private readonly bindings = new Map<Agent, SessionBinding>()
   private readonly retryHealth = new RetryHealth()
+  private readonly externalTools = new ExternalTools()
+  private readonly external = new Map<string, { bridge: HarnessBridge; assignment: string }>()
   private readonly ctx: Context
   /** Registers ordered `relay` and `notice` effect handlers that deliver to the main Session. */
   constructor(private readonly host: SessionsHost) {
@@ -106,6 +117,13 @@ export class Sessions {
   }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
+    // The optional provider may be enabled after this plugin and after the native main Session was created.
+    this.ctx.inject(['harness' as never], async child => {
+      const bridge = harnessOf(child)
+      if (this.host.closing() || typeof bridge?.manageSession !== 'function') return
+      const current = await this.ctx.sessionController.resolveAgent(this.host.masterId as SessionId)
+      if (!('error' in current)) await bridge.manageSession(this.host.masterId, { owner: 'dsh-superagent', harness: 'dsh' })
+    })
     const ctx = this.ctx
     ctx.on('agent/disposed', ({ agent }) => {
       this.release(agent)
@@ -147,9 +165,34 @@ export class Sessions {
     }
     if ('error' in result) throw result.error
     const settings = this.host.store.settings()
-    await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
+    const ticket = role === 'worker' ? this.ticketOf(result.agent) : undefined
+    const harness = ticket?.execution?.harness ?? 'dsh'
+    if (harness === 'dsh') await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
     await this.decorate(result.agent)
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
+    const bridge = harnessOf(ctx)
+    if (harness !== 'dsh' && typeof bridge?.manageSession !== 'function') throw new Error('External workers require dsh-harness-provider with managed-session support in this Profile')
+    if (typeof bridge?.manageSession === 'function') {
+      if (harness === 'dsh') await bridge.manageSession(id, { owner: 'dsh-superagent', harness })
+      else {
+        const assignment = latestAssignment(ticket!)!.id
+        const active = () => {
+          const current = this.host.store.tickets.get(ticket!.id)
+          return !this.host.closing() && !!current && liveTicket(current) && latestAssignment(current)?.id === assignment
+        }
+        const mcp = await this.externalTools.connect(id, assignment, active, this.host.tools(result.agent, ticket))
+        await bridge.manageSession(id, { owner: 'dsh-superagent', harness, context: async () => {
+          if (!active()) throw new Error('Ticket assignment ended')
+          const version = this.promptFor(result.agent, true)
+          return { instructions: this.instructions(result.agent, true)
+            + '\n\nUse the orchestrator_* tools on the dsh-superagent MCP server for acknowledgements, questions and reports. '
+            + 'The operational skills below are already loaded; do not try to load them with a separate skill tool.\n'
+            + this.host.prompts.skills(version.config).map(([name, text]) => `\n## ${SKILL_PREFIX}${name}\n${text}`).join('\n'),
+          environment: { ...process.env }, mcpServers: [mcp] }
+        } })
+        this.external.set(id, { bridge, assignment })
+      }
+    }
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
     return result.agent
   }
@@ -161,6 +204,10 @@ export class Sessions {
   /** Deliver a message once per request id: to the next turn, the current one, or `inject`ed with its label without waking the agent. */
   async prompt(sessionId: string, requestId: string, text: string, mode: 'queue' | 'steer' | { inject: string }, authorize?: () => void,
     accepted?: () => void): Promise<void> {
+    const bridge = harnessOf(this.ctx)
+    if (sessionId === this.host.masterId && typeof bridge?.manageSession === 'function') {
+      await bridge.manageSession(sessionId, { owner: 'dsh-superagent', harness: 'dsh' })
+    }
     const result = await this.ctx.sessionController.resolveAgent(sessionId as SessionId)
     if ('error' in result) throw result.error
     await this.agentDelivery.send(result.agent, key(requestId), text, mode, this.host.lifetime, authorize, accepted)
@@ -242,10 +289,7 @@ export class Sessions {
     this.updateModelHealth()
     // Disable variable interpolation so literal ${{ ... }} expressions in team prompts are preserved.
     binding.disposers.push(agent.ctx.systemPrompt.section({ name: 'dsh-superagent-policy', order: 9999, interpolate: false, text: context => {
-      const version = this.promptFor(agent, context.signal !== undefined)
-      const current = ticket && host.store.tickets.get(ticket.id)
-      const composed = host.prompts.compose(version.config, master ? 'orchestrator' : 'worker', current ? host.environment(current) : undefined)
-      return `[dsh-superagent prompt revision ${version.revision}]\n${composed}\n${current ? mandateInstructions(current.mandate) : ''}`
+      return this.instructions(agent, context.signal !== undefined)
     }, ...(master ? { complete: true } : {}) }))
     // A recreated skill scope (e.g. after the skills service restarts) starts empty, so reset `binding.skills` before rebinding.
     const skillScope = agent.ctx.inject(['skills'], scope => {
@@ -336,6 +380,25 @@ export class Sessions {
     const bound = [...revisions.filter(revision => revision !== version.revision), version.revision]
     if (revisions.at(-1) !== version.revision) store.set(KV.sessions.prompts(agent.id), bound)
     return version
+  }
+  private instructions(agent: Agent, record: boolean): string {
+    const version = this.promptFor(agent, record), ticket = this.ticketOf(agent)
+    const role = agent.id === this.host.masterId ? 'orchestrator' : 'worker'
+    return `[dsh-superagent prompt revision ${version.revision}]\n${this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? mandateInstructions(ticket.mandate) : ''}`
+  }
+  /** Ends a native worker process once its own final report has returned, or immediately for a cancellation. */
+  async endWorker(sessionId: string, assignment: string, ownTurn: boolean): Promise<void> {
+    const managed = this.external.get(sessionId)
+    if (!managed || managed.assignment !== assignment) return
+    if (ownTurn) await this.ctx.agents.get(sessionId as SessionId)?.whenIdle()
+    if (this.external.get(sessionId) !== managed) return
+    await managed.bridge.releaseManagedSession(sessionId, 'dsh-superagent')
+    this.external.delete(sessionId)
+  }
+  /** Releases native processes and the loopback MCP server before the store closes. */
+  async closeExternal(): Promise<void> {
+    try { await Promise.all([...this.external.keys()].map(id => this.endWorker(id, this.external.get(id)!.assignment, false))) }
+    finally { await this.externalTools.close() }
   }
   /** Releases registrations for `agent` in reverse order (LIFO); disposing its skill scope releases its skills as well. */
   private release(agent: Agent): void {

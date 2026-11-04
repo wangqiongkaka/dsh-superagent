@@ -21,7 +21,7 @@ import { KV } from '../kv.ts'
 export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
 /** Executor settings that control shell execution paths, prepare commands, and command shims. */
-const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.directory, executor.prepare, executor.blockedCommands])
+const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.harness, executor.directory, executor.prepare, executor.blockedCommands])
 
 /** Schema parser, settings merger, and non-panel origin guard for one settings block kind. */
 interface Block {
@@ -157,7 +157,7 @@ export class Settings {
     const parsed = rules.parse(value, sources, id)
     const current = store.settings()
     const candidate = rules.merge(current, parsed, id)
-    const model = block === 'eval' ? candidate.eval.model : block === 'executor' ? candidate.executor.model : null
+    const model = block === 'eval' ? candidate.eval.model : block === 'executor' && candidate.executor.harness === 'dsh' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null
     if (model && JSON.stringify(model) !== JSON.stringify(previous)) {
       try { await resolveRoleModel(this.host.context, model) }
