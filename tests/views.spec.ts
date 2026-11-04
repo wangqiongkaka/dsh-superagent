@@ -12,6 +12,7 @@ import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
 import { threadDetail } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
 import { overview } from '../src/app/views/overview.ts'
+import { settingsView } from '../src/app/views/settings.ts'
 import { markdown, plain } from '../src/app/views/text.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
 import { KV } from '../src/kv.ts'
@@ -63,6 +64,29 @@ const live = (id: string) => store.tickets.save({ id, title: id, decisionId: 'd'
   updatedAt: at,
   mandate: { strength: 'explicit', policyVersion: 'v', basis: { via: 'listed' }, actor: { source: 'feishu', id: 'ou_alice' }, scope: '' },
   origin: { triggerId: 'e0', triggerIds: ['e0'] }, assignments: [], inputs: [] })
+
+it('keeps legacy settings available only while an open ticket depends on them', () => {
+  const { sources } = views()
+  const required = () => settingsView(store, sources, {}, {}, directory).sources.find(source => source.kind === 'github')?.legacyRequired
+  expect(required()).toBe(false)
+  live('legacy')
+  const ticket = store.tickets.get('legacy')!
+  expect(required()).toBe(false)
+  for (const dependency of [
+    { channels: [githubChannel(42)] },
+    { follows: [{ thread: 'github:42', own: true }] },
+    { execution: { name: 'legacy', directory: '/tmp/legacy', assignment: 'fix' } },
+  ]) {
+    store.tickets.save({ ...ticket, ...dependency })
+    expect(required()).toBe(true)
+    store.tickets.save({ ...ticket, ...dependency, ended: { at, by: 'executor', outcome: 'completed' } })
+    expect(required()).toBe(false)
+  }
+  store.tickets.save(ticket)
+  store.triggers.save({ id: 'e0', source: 'github', threads: [], actor: { source: 'github', id: 'alice' },
+    human: true, at, text: 'fix', meta: {} })
+  expect(required()).toBe(true)
+})
 const message = (id: string, actor: { source: string; id: string }, human = true) => ({ id, source: actor.source,
   threads: [{ source: 'feishu', id: 'oc_1:om_root' }], actor, human, at, text: `message ${id}`, meta: {} })
 

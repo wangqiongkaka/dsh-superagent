@@ -33,6 +33,8 @@ IDCRM 群填写 `idcrm,backend`；另一群可以仅填写 `backend`。未绑定
 
 同一个 GitHub 项目不能同时启用旧 GitHub 来源和多仓库来源，以免产生重复工单。迁移时先关闭旧来源，再添加新来源；旧工单及历史不改写，旧工单的 PR 跟踪需要保留旧来源时，应待旧工单结束再迁移。
 
+来源设置默认隐藏已关闭且没有未完成工单依赖的旧 GitHub 入口；仍启用或有旧工单依赖时显示“旧版兼容”标记。此展示规则不删除配置、历史或底层来源支持。
+
 ## GitLab 账号
 
 使用支持 `auth git-credential` 的 `glab`，为智能体单独登录自建实例，例如 `glab auth login --hostname gitlab.example.com`。需要 API 与 Git 读写权限，以及项目 Developer 或更高权限；受保护分支仍遵从实例规则。已有默认分支的 HTTPS 项目可用，支持多级 group/subgroup 路径；不关闭 TLS 校验。

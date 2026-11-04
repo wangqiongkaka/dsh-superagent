@@ -337,6 +337,7 @@ const TEXT = {
   executorIntro: ['执行器执行派工：每个工单一个执行器 Session 和执行目录。', 'The Executor runs Assignments: one Executor Session and directory per Ticket.'],
   executorModel: ['执行器模型', 'Executor model'],
   executorHarness: ['执行器 Harness', 'Executor Harness'],
+  legacySource: ['旧版兼容', 'Legacy compatibility'],
   executorHarnessHint: ['仅用于新工单；已有工单保留原 Harness，主 Session 始终使用 DSH。', 'Applies only to new Tickets; existing Tickets keep their Harness and the main Session stays on DSH.'],
   externalHarnessHint: ['需在同一 Profile 安装支持受控会话的 Harness Provider。模型与推理强度沿用该 Harness 最近的可用选择，工单以完全权限执行。', 'Requires Harness Provider with managed-session support in the same Profile. Uses the Harness’s last available model and reasoning choice; workers run with full access.'],
   executorModelHint: ['保存后用于新建的执行器 Session，已有 Session 保持原选择。留空继承 DSH 默认值。', 'Applies to new Executor Sessions; existing Sessions keep their choice. Leave empty to inherit the DSH default.'],

@@ -37,6 +37,7 @@ function SourceCard({ source }: { source: SourceView }) {
         <div className="dt-row-main">
           <div className="dt-row-title">
             <span className="dt-card-title">{localized(t, source.title)}</span>{description && <InfoTip text={description} />}
+            {source.kind === 'github' && <Tag tone="neutral">{t('legacySource')}</Tag>}
             {!source.installed && <Tag tone="warning">{t('sourceNotInstalled')}</Tag>}
           </div>
         </div>
@@ -62,7 +63,8 @@ export function SourceSettings({ focus }: { focus?: string }) {
   const { sources } = useSettings().settings
   useEffect(() => { if (focus) document.getElementById(`dt-source-${focus}`)?.scrollIntoView?.({ block: 'start' }) }, [focus])
   return <div className="dt-form">
-    {sources.map(source => <SourceCard key={source.id} source={source} />)}
+    {sources.filter(source => source.kind !== 'github' || source.value.enabled || source.legacyRequired)
+      .map(source => <SourceCard key={source.id} source={source} />)}
     <ConfigHistory blocks={['source:']} />
   </div>
 }

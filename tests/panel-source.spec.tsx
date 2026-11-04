@@ -7,6 +7,15 @@ import { usePanel, mount, remount, settle, all, find, tab, click, type, text, fi
 import { server, problemOf, droppedReply } from './fixtures/panel-server.ts'
 
 usePanel()
+it('hides disabled legacy settings and labels enabled legacy settings', async () => {
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  expect(document.querySelector('#dt-source-github')?.textContent).toContain('旧版兼容')
+  server.settings.sources.github!.enabled = false
+  await remount()
+  expect(document.querySelector('#dt-source-github')).toBeNull()
+  expect(document.querySelector('#dt-source-feishu')).not.toBeNull()
+})
 it('saves independent group and direct-message repository bindings', async () => {
   at({ page: 'settings', query: { group: 'source' } })
   await mount()

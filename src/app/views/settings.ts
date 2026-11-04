@@ -32,6 +32,11 @@ export function settingsView(store: Store, sources: SourceRegistry, health: Heal
       const problem = problemOf(instance.id, setup)
       const { id, title } = sourceHealth(sources, instance, health)
       return { id, kind: instance.kind, title, description: kind?.description ?? { zh: '', en: '' }, installed: instance.installed,
+        ...instance.kind === 'github' ? { legacyRequired: store.tickets.open().some(ticket =>
+          ticket.channels.some(channel => channel.source === instance.id)
+          || ticket.follows?.some(follow => follow.thread.startsWith(`${instance.id}:`))
+          || ticket.origin.triggerIds.some(triggerId => store.triggers.get(triggerId)?.source === instance.id)
+          || !!ticket.execution && !ticket.execution.repositories?.length) } : {},
         value: { enabled: instance.enabled, config: instance.config }, revision: store.blockRevision(`source:${instance.id}`),
         restarts: SETUP_FIELDS[instance.id] ?? [], fields: kind?.fields ?? [], facts: kind?.facts?.(setup.deployment) ?? {},
         labels: store.get(KV.sources.labels(instance.id)) ?? {}, ...problem ? { problem } : {}, ...policyOf(sources, instance.id, health) }
