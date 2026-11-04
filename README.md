@@ -1,5 +1,7 @@
 # dsh-superagent
 
+飞书群独立绑定多个 GitHub / 自建 GitLab 仓库的配置方法见 [多仓库配置](docs/009-multiple-repositories.md)。
+
 > **Research prototype for reference only, not an official DeepSeek product.** This code grew out of our team's day-to-day development work, with much of the engineering done by coding agents. Treat it as research code, not production-ready software. It may still contain bugs, and its coding style and engineering practices may be inconsistent. Review and adapt it before using it in your own environment.
 >
 > We have adapted it for publication, so it is not identical to our internal version or the implementation described in *Exploring Super-agent Design: Towards a More Autonomous Agent System*. Some designs discussed in the article are directions for future development and are not implemented in this prototype.

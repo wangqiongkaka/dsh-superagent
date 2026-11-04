@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { IM_WORDS } from '../../infra/text.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
+import { claimForgePull } from '../../sources/git.ts'
+import { ForgeApi } from '../../sources/forge-api.ts'
 import type { SourceContext } from '../../sources/host.ts'
 import { readResource, type ResourceHost } from '../resources.ts'
 import type { Store } from '../store.ts'
@@ -80,14 +82,24 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         human_action: z.string().trim().min(1).max(1000).nullish().describe('One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${host.github.deployment.github.login} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
+        pull_requests: z.array(z.object({ repository_id: z.string(), number: z.number().int().positive() }).strict()).max(50).optional()
+          .describe('PRs/MRs in selected repositories. Use instead of pr_number for multi-repository tickets. Include all open PRs/MRs before reporting ready.'),
         reply_to_trigger_id: z.string().optional().describe('The explicit human question this report answers; never for ordinary progress.'),
       }).strict(),
       execute: async (args, signal) => {
         const current = host.store.tickets.get(ticketId)
         if (!current || !liveTicket(current)) throw new Error('Ticket ended (PR was closed or work finished); do not resume it')
+        if (current.execution?.repositories && args.pr_number != null) throw new Error('Use pull_requests with repository_id for this ticket')
+        const requests = await Promise.all((args.pull_requests ?? []).map(async ref => {
+          const selected = current.execution?.repositories?.find(repo => repo.id === ref.repository_id)
+          const repo = host.github.deployment.repositories?.find(repo => repo.id === selected?.id && repo.url === selected.url)
+          if (!repo) throw new Error('PR/MR repository is not selected for this ticket')
+          return { repo, topic: await new ForgeApi(host.github.commands.withSignal(signal), repo).read('pull', ref.number) }
+        }))
         const pull = args.pr_number != null ? await readPull(host.github, args.pr_number, signal) : undefined
         // Claim the PR, record the report, and queue the relay atomically so a rejected PR claim or invalid report leaves no partial state, and a recorded report always reaches the main Session.
         return host.store.atomic(() => {
+          for (const request of requests) claimForgePull(host.github, ticketId, request.repo, request.topic)
           const refused = pull && claimPull(host.github, ticketId, pull)
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.human_action !== undefined ? { question: args.human_action } : {}),

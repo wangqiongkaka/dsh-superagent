@@ -7,6 +7,16 @@ import { usePanel, mount, remount, settle, all, find, tab, click, type, text, fi
 import { server, problemOf, droppedReply } from './fixtures/panel-server.ts'
 
 usePanel()
+it('saves independent group and direct-message repository bindings', async () => {
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'idcrm,backend')
+  await type(field<HTMLInputElement>('私聊可用仓库'), 'backend')
+  const form = document.querySelector<HTMLFormElement>('#dt-source-feishu')!
+  await act(async () => { form.requestSubmit() })
+  await settle()
+  expect(server.settings.sources.feishu!.config).toMatchObject({ chats: [{ chatId: 'oc_team', repositories: 'idcrm,backend' }], directRepositories: 'backend' })
+})
 it('shows each Source\'s state on the Source status and opens its settings from a setup problem', async () => {
   await mount()
   await click(zh['tab.source'])

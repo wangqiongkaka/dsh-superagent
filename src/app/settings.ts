@@ -13,6 +13,7 @@ import type { Sessions } from './sessions.ts'
 import { setupChanged, type Setup } from './setup.ts'
 import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
+import { validateRepositoryBindings } from '../repositories.ts'
 
 /**
  * Indicates an optimistic concurrency conflict when saving or syncing a settings block against a stale revision.
@@ -22,6 +23,8 @@ export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
 /** Executor settings that control shell execution paths, prepare commands, and command shims. */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.harness, executor.directory, executor.prepare, executor.blockedCommands])
+const repositoryBindings = (settings: SettingsValue) => JSON.stringify([settings.sources.feishu?.config.directRepositories ?? '',
+  ((settings.sources.feishu?.config.chats ?? []) as { chatId: string; repositories?: string }[]).filter(chat => chat.repositories).map(chat => [chat.chatId, chat.repositories])])
 
 /** Schema parser, settings merger, and non-panel origin guard for one settings block kind. */
 interface Block {
@@ -48,7 +51,7 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
     parse: (value, sources, id) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown() }).parse(value)),
     merge: (settings, value, id) => ({ ...settings, sources: { ...settings.sources, [id]: value as SettingsValue['sources'][string] } }),
     // Only the management panel may switch source accounts.
-    guard: (current, candidate, origin) => { if (origin !== 'panel' && setupChanged(current, candidate)) throw new UserError('panelOnlyAccounts') },
+    guard: (current, candidate, origin) => { if (origin !== 'panel' && (setupChanged(current, candidate) || repositoryBindings(current) !== repositoryBindings(candidate))) throw new UserError('panelOnlyAccounts') },
   },
 }
 
@@ -157,6 +160,7 @@ export class Settings {
     const parsed = rules.parse(value, sources, id)
     const current = store.settings()
     const candidate = rules.merge(current, parsed, id)
+    if (kind === 'source') validateRepositoryBindings(candidate)
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' && candidate.executor.harness === 'dsh' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null
     if (model && JSON.stringify(model) !== JSON.stringify(previous)) {
@@ -169,6 +173,7 @@ export class Settings {
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()
     const settings = rules.merge(old, parsed, id)
+    if (kind === 'source') validateRepositoryBindings(settings)
     if (JSON.stringify(SettingsSchema.parse(settings)) === JSON.stringify(old)) {
       const delivery = await sessions.delivery(`settings:${block}`)
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }

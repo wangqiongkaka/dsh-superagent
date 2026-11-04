@@ -185,6 +185,7 @@ export function TicketPage({ id }: { id: string }) {
       <Details icon="hash" title={t('identifiers')}>
         <KeyValues rows={[[t('ticketId'), <span className="dt-mono">{data.id}</span>], [t('executionDirectory'), <span
           className="dt-mono">{data.directory ?? t('empty')}</span>],
+          ...(data.repositories?.length ? [[t('ticketRepositories'), <span>{data.repositories.map(repo => <span key={repo.id} className="dt-inline"><ExternalLink href={repo.url}>{repo.id}</ExternalLink>{' '}</span>)}</span>] as [string, ReactNode]] : []),
           ...legacy && data.mandate.scope ? [[t('legacyAssignment'), <span
             className="dt-mono dt-clamp">{data.mandate.scope}</span>] as [string, ReactNode]] : []]} />
       </Details>

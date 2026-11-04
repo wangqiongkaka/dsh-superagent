@@ -89,6 +89,22 @@ function closePull(ctx: SourceContext, pr: Pull): void {
  */
 export function pullEndNotices(ticket: Ticket, request: string, repository: string): OutboundMessage[] {
   const outcome = ticket.ended?.outcome
+  const forge = (ticket.follows ?? []).filter(item => item.closed && item.thread.startsWith('git:'))
+  if ((outcome === 'merged' || outcome === 'closed') && forge.length) {
+    const chinese = /\p{Script=Han}/u.test(request) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(request)
+    const links = forge.map(follow => {
+      const match = /^git:([^:]+):pull:(\d+)$/.exec(follow.thread)
+      const repo = ticket.execution?.repositories?.find(item => match?.[1] === `${item.id}-${key(item.url).slice(0, 12)}`)
+      if (!repo || !match) return undefined
+      const url = `${repo.url}/${repo.provider === 'gitlab' ? '-/merge_requests' : 'pull'}/${match[2]}`
+      const status = follow.closed!.outcome === 'merged' ? (chinese ? '已合并' : 'merged') : (chinese ? '已关闭（未合并）' : 'closed without merging')
+      return `[${repo.id} #${match[2]}](${url}) ${status}`
+    }).filter(Boolean)
+    if (links.length) return ticket.channels.filter(channel => channel.source !== 'git' && channel.source !== SOURCE).map(channel => ({
+      id: key('forge-terminal', ticket.id, channel.source, JSON.stringify(channel.address), ticket.ended!.at), channel,
+      text: links.join('\n'), kind: 'notice', ticketId: ticket.id,
+    }))
+  }
   const follows = (ticket.follows ?? []).filter(item => item.closed && pullNumber(item.thread) !== undefined)
   const latest = (items: Follow[]) => items.sort((a, b) => b.closed!.at.localeCompare(a.closed!.at))[0]
   const follow = latest(follows.filter(item => item.own)) ?? latest(follows)

@@ -1,4 +1,6 @@
 Candidate cards include source references, batch triggers, the thread's tickets, open ones first and ended ones too, the tickets the trigger already reached (delivered_to), and the tickets of the pull requests and Issues its text names (referenced_tickets).
+For Feishu and Git repository sources, available_repositories is the only authorized repository list for new work. Supply one or more repository IDs as repositories when accepting. Choose from the request, not a global default. If no repositories are available, answer the sender with orchestrator_reply purpose=answer asking an operator to configure the chat binding; do not dispatch. If the target is ambiguous, ask the sender before accepting. A single ticket may span multiple selected repositories. Do not attach an unrelated repository task to a ticket to bypass repository selection.
+After asking about missing bindings or an ambiguous repository, ignore the current candidate with that reason so the sender's next message can be routed as a fresh candidate.
 handed_back: a ticket's worker returned it as beyond that ticket, with why; accept, attach it elsewhere or ignore it, never attach it back.
 Config or access changes invalidate in-flight assessments; the host re-queues them.
 

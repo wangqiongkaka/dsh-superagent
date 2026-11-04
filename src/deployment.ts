@@ -8,6 +8,8 @@ import { z } from 'zod'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import { runAsWorker, sameDirectory, withoutDirectory, workerBin } from './infra/environment.ts'
 import { SetupError } from './setup.ts'
+import { repositoryCatalog, type ResolvedRepository } from './repositories.ts'
+import type { Settings } from './policy.ts'
 
 const reason = (error: unknown): string => error instanceof Error ? error.message : String(error)
 const absolute = (description: string) => s.string().pattern(/^\//).description(`${description} Absolute path.`)
@@ -48,12 +50,38 @@ export const GithubAccountsSchema = z.object({
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
-export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
+export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape), git: ['repositories'] }
 
 export interface Deployment extends Machine {
+  repositories?: ResolvedRepository[]
   repository: string
   github: { cli: string; login: string; noreply: string }
   feishu?: FeishuBot
+}
+
+export async function resolveRepositories(machine: Machine, settings: Settings, probe: Probe, path = process.env.PATH ?? ''): Promise<ResolvedRepository[]> {
+  const resolved: ResolvedRepository[] = []
+  for (const repository of repositoryCatalog(settings)) {
+    const cli = executable(repository.cli, path, workerBin(machine.stateDir))
+    const url = new URL(repository.url)
+    const project = url.pathname.slice(1)
+    if (repository.provider === 'github') {
+      const deployment = await resolveDeployment(machine, { repository: project, cli }, probe, path)
+      const details = z.object({ default_branch: z.string() }).parse(JSON.parse(await probe([cli, 'api', `repos/${project}`])))
+      resolved.push({ ...repository, cli, login: deployment.github.login, email: deployment.github.noreply, defaultBranch: details.default_branch })
+    } else {
+      const api = async (endpoint: string) => JSON.parse(await probe([cli, 'api', '--hostname', url.host, endpoint])) as unknown
+      const user = z.object({ username: z.string().min(1), email: z.string().email() }).parse(await api('user'))
+      const access = z.object({ id: z.number().int().positive(), default_branch: z.string().nullable(), permissions: z.object({
+        project_access: z.object({ access_level: z.number() }).nullable(), group_access: z.object({ access_level: z.number() }).nullable(),
+      }) }).parse(await api(`projects/${encodeURIComponent(project)}`))
+      if (Math.max(access.permissions.project_access?.access_level ?? 0, access.permissions.group_access?.access_level ?? 0) < 30)
+        throw new Error(`GitLab account ${user.username} needs Developer access to ${repository.url}`)
+      if (!access.default_branch) throw new Error(`Initialize a default branch for ${repository.url} before enabling it`)
+      resolved.push({ ...repository, cli, login: user.username, email: user.email, projectId: access.id, defaultBranch: access.default_branch })
+    }
+  }
+  return resolved
 }
 export interface FeishuBot { cli: string; appId: string; brand: 'feishu' | 'lark'; botId: string; name: string }
 

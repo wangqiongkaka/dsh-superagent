@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "src/client/client.css"
+        ],
+        "createdAt": "2026-11-04T10:06:12.083Z",
+        "reason": "用户已确认保留既有设计：第119行提示词分段和第378行默认内容更新提示均来自8c32a9d，非本次新增。"
+      }
+    ]
+  }
+}

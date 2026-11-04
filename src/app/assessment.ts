@@ -9,6 +9,8 @@ import type { Commands } from '../infra/commands.ts'
 import type { Deployment } from '../deployment.ts'
 import { admissionContext } from '../sources/admission-context.ts'
 import { readRepositoryPath } from '../sources/github-read.ts'
+import { availableRepositories } from '../repositories.ts'
+import { ForgeApi } from '../sources/forge-api.ts'
 import type { TriggerContext } from '../sources/kind.ts'
 import { relatedTickets } from './cards.ts'
 import { textPage } from './context.ts'
@@ -26,6 +28,7 @@ export const AssessmentSchema = z.object({
   direction: AdmissionDirectionSchema.describe('Required for every decision.'),
   title: z.string().min(1).max(160),
   worktree_name: WorktreeNameSchema.optional(),
+  repositories: z.array(z.string()).min(1).max(50).optional().describe('Selected IDs from available_repositories; required for Feishu and Git repository work.'),
   scope: z.string().max(1500),
   intent_evidence: z.string().trim().min(1).max(700).nullish().describe('For acceptance: the quotes that establish the three facts.'),
   acknowledgement: AcknowledgementSchema.nullish().describe('For acceptance: one sentence in the source language, posted as a reply to the trigger; omit only when a matched rule asks for silence.'),
@@ -68,6 +71,7 @@ export const EvalReadSchema = z.object({
   trigger_id: z.string().min(1).describe('Original candidate ID returned by orchestrator_eval; every reference is scoped to this trigger.'),
   resource: z.enum(['message', 'root', 'parent', 'thread', 'file', 'directory', 'image']),
   path: z.string().optional().describe('Repository-relative path, only for file/directory.'),
+  repository_id: z.string().optional().describe('For file/directory on Feishu or Git sources: an ID from available_repositories.'),
   message_id: z.string().optional().describe('Only for message: omit for the trigger, or the id of a window message or stub.'),
   cursor: z.string().optional().describe('Only for thread: omit on the first page, then the next_cursor of the window or the cursor of next_read. Never a thread or message ID.'),
   image_id: z.string().optional().describe('Only for image: an image id the window or a read lists.'),
@@ -207,6 +211,7 @@ export class MasterAssessor implements Assessor {
     const settings = this.host.settings()
     const others = candidate.triggers.filter(item => item.id !== trigger.id)
     return { trigger_id: trigger.id, strength: candidate.strength, mode: settings.eval.mode,
+      ...(['feishu', 'git'].includes(trigger.source) ? { available_repositories: availableRepositories(settings, trigger) } : {}),
       source: { kind: trigger.source, actor: trigger.actor.id, thread: threadKey(trigger.threads[0]!), ...(trigger.url
         ? { url: trigger.url } : {}) },
       ...cut(trigger.text, TRIGGER_CHARS), ...imageIds(source?.messageId ?? '', trigger.text),
@@ -237,7 +242,7 @@ export class MasterAssessor implements Assessor {
         const key = read.image_id!.slice(read.image_id!.indexOf('/') + 1)
         return source.image(agent, commands, image, key, this.host.deployment.stateDir, signal)
       }
-      const cacheKey = JSON.stringify([read.resource, read.path, read.cursor, read.message_id])
+      const cacheKey = JSON.stringify([read.resource, read.repository_id, read.path, read.cursor, read.message_id])
       if (read.offset > 0) {
         const cached = snapshots.get(cacheKey)
         if (cached === undefined) throw new Error('Read this resource at offset 0 first')
@@ -263,7 +268,24 @@ export class MasterAssessor implements Assessor {
         body = JSON.stringify({ images: references, next_read: next, ...result.body })
       }
       else {
-        body = await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')
+        if (['feishu', 'git'].includes(trigger.source)) {
+          const selected = availableRepositories(this.host.settings(), trigger).find(repo => repo.id === read.repository_id)
+          const resolved = this.host.deployment.repositories?.find(repo => repo.id === selected?.id && repo.url === selected.url)
+          if (!resolved) throw new Error('repository_id must name a repository bound to this source')
+          const path = read.path!
+          if (path.startsWith('/') || path.split('/').some(part => part === '..' || part === '.')) throw new Error('Use a repository-relative path without traversal')
+          const api = new ForgeApi(commands, resolved)
+          const ref = encodeURIComponent(resolved.defaultBranch)
+          const endpoint = api.gitlab ? read.resource === 'directory'
+            ? `repository/tree?path=${encodeURIComponent(path)}&ref=${ref}`
+            : `repository/files/${encodeURIComponent(path)}?ref=${ref}`
+            : `contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${ref}`
+          const result = read.resource === 'directory' && api.gitlab ? await api.pages(endpoint) : await api.request(endpoint)
+          if (read.resource === 'file') {
+            const file = z.object({ content: z.string(), encoding: z.literal('base64') }).parse(result)
+            body = Buffer.from(file.content, 'base64').toString('utf8')
+          } else body = JSON.stringify(result)
+        } else body = await readRepositoryPath(commands, read.path!, read.resource === 'directory' ? 'directory' : 'file')
       }
       snapshots.set(cacheKey, body)
       return textPage(read.resource, body, read.offset, 4000)

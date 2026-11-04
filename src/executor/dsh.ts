@@ -10,6 +10,7 @@ import type { AssessmentOutcome, Assignment, EngineForExecutor, Execution, Execu
 import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
+import { selectRepositories } from '../repositories.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
@@ -237,7 +238,10 @@ export class DshExecutor implements Executor {
   }
   /** Populates a newly accepted ticket's `execution` attributes (worktree name, workspace directory, and assignment text). */
   prepare(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>): Ticket {
-    return { ...ticket, execution: ticketExecution(ticket, outcome, this.host.store.settings(), this.host.machine.stateDir) }
+    const settings = this.host.store.settings()
+    const trigger = sourceTrigger(this.host, ticket)
+    const repositories = trigger ? selectRepositories(settings, trigger, outcome.repositories) : undefined
+    return { ...ticket, execution: { ...ticketExecution(ticket, outcome, settings, this.host.machine.stateDir), ...(repositories ? { repositories } : {}) } }
   }
   /**
    * Runs the configured `executor.prepare` command for a new ticket workspace in its parent directory with the ticket's
@@ -252,6 +256,19 @@ export class DshExecutor implements Executor {
     const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
+    if (ticket.execution?.repositories) {
+      await mkdir(directory, { recursive: true })
+      for (const repository of ticket.execution.repositories) {
+        const target = join(directory, repository.id)
+        if (!await stat(target).then(() => true, () => false)) {
+          await runAsWorker(this.host.context.subprocess, ['git', 'clone', '--', `${repository.url}.git`, target], directory, signal, env)
+            .catch((error: unknown) => { throw new PrepareFailed(`Clone ${repository.id} failed: ${String(error)}`) })
+        }
+        const remote = (await runAsWorker(this.host.context.subprocess, ['git', 'remote', 'get-url', 'origin'], target, signal, env)).trim()
+        if (remote.replace(/\.git$/, '') !== repository.url) throw new PrepareFailed(`Repository ${repository.id} has an unexpected origin; inspect its directory before retrying`)
+        await verifyDirectory(target, this.host.context.subprocess, signal)
+      }
+    }
     if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
       .catch(async (error: unknown) => {
         // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
@@ -433,10 +450,15 @@ export class DshExecutor implements Executor {
     const source = sourceTrigger(this.host, ticket)
     const workspace = ticket.execution?.directory ?? ''
     if (!current()) return
+    if (ticket.execution?.repositories) this.host.environment(ticket)
     // Prepare the workspace directory once; an existing directory counts as already prepared, including worktrees created before `prepare` commands existed.
-    if (!await stat(workspace).then(() => true, () => false)) {
+    if (ticket.execution?.repositories ? !ticket.execution.prepared : !await stat(workspace).then(() => true, () => false)) {
       await this.prepareDirectory(ticket)
       if (!current()) return
+      if (ticket.execution?.repositories) {
+        const stored = this.host.store.tickets.get(ticket.id)!
+        this.host.store.tickets.save({ ...stored, execution: { ...stored.execution!, prepared: true } })
+      }
     }
     if (!current()) return
     const sessionId = workerSessionId(ticket.id)
