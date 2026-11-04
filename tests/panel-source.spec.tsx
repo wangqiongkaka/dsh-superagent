@@ -12,10 +12,12 @@ it('saves independent group and direct-message repository bindings', async () =>
   await mount()
   await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'idcrm,backend')
   await type(field<HTMLInputElement>('私聊可用仓库'), 'backend')
+  await type(field<HTMLInputElement>('主仓库标识（填写后启用 worktree）'), 'idcrm')
+  await type(field<HTMLInputElement>('私聊主仓库标识'), 'backend')
   const form = document.querySelector<HTMLFormElement>('#dt-source-feishu')!
   await act(async () => { form.requestSubmit() })
   await settle()
-  expect(server.settings.sources.feishu!.config).toMatchObject({ chats: [{ chatId: 'oc_team', repositories: 'idcrm,backend' }], directRepositories: 'backend' })
+  expect(server.settings.sources.feishu!.config).toMatchObject({ chats: [{ chatId: 'oc_team', repositories: 'idcrm,backend', primaryRepository: 'idcrm' }], directRepositories: 'backend', directPrimaryRepository: 'backend' })
 })
 it('shows each Source\'s state on the Source status and opens its settings from a setup problem', async () => {
   await mount()

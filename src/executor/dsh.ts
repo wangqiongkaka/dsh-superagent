@@ -11,6 +11,7 @@ import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import { selectRepositories } from '../repositories.ts'
+import { prepareWorktree, worktreeExecution } from './worktrees.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
@@ -241,7 +242,8 @@ export class DshExecutor implements Executor {
     const settings = this.host.store.settings()
     const trigger = sourceTrigger(this.host, ticket)
     const repositories = trigger ? selectRepositories(settings, trigger, outcome.repositories) : undefined
-    return { ...ticket, execution: { ...ticketExecution(ticket, outcome, settings, this.host.machine.stateDir), ...(repositories ? { repositories } : {}) } }
+    const execution = ticketExecution(ticket, outcome, settings, this.host.machine.stateDir)
+    return { ...ticket, execution: repositories && trigger ? worktreeExecution(execution, repositories, settings, trigger) : execution }
   }
   /**
    * Runs the configured `executor.prepare` command for a new ticket workspace in its parent directory with the ticket's
@@ -257,8 +259,18 @@ export class DshExecutor implements Executor {
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
     if (ticket.execution?.repositories) {
-      await mkdir(directory, { recursive: true })
+      if (!ticket.execution.primaryRepository) await mkdir(directory, { recursive: true })
       for (const repository of ticket.execution.repositories) {
+        if (repository.worktree) {
+          const manifest = JSON.parse(env.DSH_SUPERAGENT_REPOSITORIES!) as { id: string; defaultBranch: string }[]
+          const branch = manifest.find(item => item.id === repository.id)?.defaultBranch
+          if (!branch) throw new PrepareFailed(`Repository ${repository.id} has no default branch`)
+          await prepareWorktree(repository, ticket.execution.name, branch,
+            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env),
+            cwd => verifyDirectory(cwd, this.host.context.subprocess, signal), !ticket.execution.prepared)
+            .catch((error: unknown) => { throw new PrepareFailed(String(error)) })
+          continue
+        }
         const target = join(directory, repository.id)
         if (!await stat(target).then(() => true, () => false)) {
           await runAsWorker(this.host.context.subprocess, ['git', 'clone', '--', `${repository.url}.git`, target], directory, signal, env)
@@ -269,7 +281,7 @@ export class DshExecutor implements Executor {
         await verifyDirectory(target, this.host.context.subprocess, signal)
       }
     }
-    if (command) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
+    if (command && !ticket.execution?.prepared) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
       .catch(async (error: unknown) => {
         // Remove an empty directory left by a failed prepare command so a later retry does not treat it as already prepared.
         await rmdir(directory).catch(() => { /* Absent, or holding what the command wrote, which the output explains. */ })
@@ -452,7 +464,7 @@ export class DshExecutor implements Executor {
     if (!current()) return
     if (ticket.execution?.repositories) this.host.environment(ticket)
     // Prepare the workspace directory once; an existing directory counts as already prepared, including worktrees created before `prepare` commands existed.
-    if (ticket.execution?.repositories ? !ticket.execution.prepared : !await stat(workspace).then(() => true, () => false)) {
+    if (ticket.execution?.repositories ? !!ticket.execution.primaryRepository || !ticket.execution.prepared : !await stat(workspace).then(() => true, () => false)) {
       await this.prepareDirectory(ticket)
       if (!current()) return
       if (ticket.execution?.repositories) {

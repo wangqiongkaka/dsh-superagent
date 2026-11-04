@@ -23,6 +23,7 @@ import type { RegisterTool, Tool } from './tools/tool.ts'
 
 /** Optional API supplied by dsh-harness-provider; older versions cannot run external workers. */
 interface HarnessBridge {
+  linkProjects?(request: { sessionId: string; workspaceIds: string[]; paths: string[] }): Promise<unknown>
   manageSession(id: string, options: { owner: string; harness: 'dsh' | 'codex' | 'claude-code';
     context?: () => Promise<{ instructions: string; environment: Record<string, string | undefined>; mcpServers: WorkerMcpServer[] }> }): Promise<void>
   releaseManagedSession(id: string, owner: string): Promise<void>
@@ -166,6 +167,12 @@ export class Sessions {
     if ('error' in result) throw result.error
     const settings = this.host.store.settings()
     const ticket = role === 'worker' ? this.ticketOf(result.agent) : undefined
+    if (ticket?.execution?.primaryRepository) {
+      for (const repo of ticket.execution.repositories ?? []) if (repo.worktree) {
+        await ctx.workspaceRegistry.create(repo.worktree.base)
+        await ctx.workspaceRegistry.create(repo.worktree.directory)
+      }
+    }
     const harness = ticket?.execution?.harness ?? 'dsh'
     if (harness === 'dsh') await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
     await this.decorate(result.agent)
@@ -191,6 +198,15 @@ export class Sessions {
           environment: { ...process.env }, mcpServers: [mcp] }
         } })
         this.external.set(id, { bridge, assignment })
+        if (ticket!.execution?.primaryRepository && !ticket!.execution.projectsLinked) {
+          const paths = ticket!.execution.repositories!.flatMap(repo => repo.worktree && repo.id !== ticket!.execution!.primaryRepository ? [repo.worktree.directory] : [])
+          if (paths.length) {
+            if (typeof bridge.linkProjects !== 'function') throw new Error('当前 Harness 插件不支持关联项目，请升级后重试。')
+            await bridge.linkProjects({ sessionId: id, workspaceIds: [], paths })
+          }
+          const stored = this.host.store.tickets.get(ticket!.id)!
+          this.host.store.tickets.save({ ...stored, execution: { ...stored.execution!, projectsLinked: true } })
+        }
       }
     }
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })

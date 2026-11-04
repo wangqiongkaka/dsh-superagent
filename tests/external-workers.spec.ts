@@ -7,6 +7,41 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 let h: Host | undefined
 afterEach(async () => { await h?.stop(); h = undefined })
 
+it.each(['codex', 'claude-code'] as const)('links only secondary worktrees for %s and persists the successful setup', async harness => {
+  h = await startRuntime()
+  const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}), linkProjects: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  const settings = h.runtime.store.settings()
+  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, harness } })
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  const primary = ticket.execution!.repositories![0]!
+  h.runtime.store.tickets.save({ ...ticket, execution: { ...ticket.execution!, primaryRepository: primary.id,
+    repositories: [{ ...primary, worktree: { base: '/projects/frontend', directory: ticket.execution!.directory } },
+      { ...primary, id: 'backend', worktree: { base: '/projects/backend', directory: '/projects/backend-worktrees/task' } }] } })
+  await h.runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
+  expect(bridge.linkProjects).toHaveBeenCalledExactlyOnceWith({ sessionId, workspaceIds: [], paths: ['/projects/backend-worktrees/task'] })
+  expect(h.runtime.store.tickets.get(ticket.id)!.execution!.projectsLinked).toBe(true)
+  await h.runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
+  expect(bridge.linkProjects).toHaveBeenCalledTimes(1)
+})
+
+it('does not mark linking complete when the provider fails, allowing an explicit retry', async () => {
+  h = await startRuntime()
+  const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}), linkProjects: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  const settings = h.runtime.store.settings()
+  h.runtime.store.saveSettings({ ...settings, executor: { ...settings.executor, harness: 'codex' } })
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  const primary = ticket.execution!.repositories![0]!
+  h.runtime.store.tickets.save({ ...ticket, execution: { ...ticket.execution!, primaryRepository: primary.id,
+    repositories: [primary, { ...primary, id: 'backend', worktree: { base: '/projects/backend', directory: '/projects/backend-worktrees/task' } }] } })
+  bridge.linkProjects.mockRejectedValueOnce(new Error('busy'))
+  await expect(h.runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')).rejects.toThrow('busy')
+  expect(h.runtime.store.tickets.get(ticket.id)!.execution!.projectsLinked).toBeUndefined()
+  await h.runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
+  expect(h.runtime.store.tickets.get(ticket.id)!.execution!.projectsLinked).toBe(true)
+})
+
 it.each(['codex', 'claude-code'] as const)('runs new %s tickets with scoped tools, keeps the main Session native and preserves the ticket Harness', async harness => {
   h = await startRuntime()
   type Managed = { owner: string; harness: string; context?: () => Promise<{ instructions: string; mcpServers: WorkerMcpServer[] }> }

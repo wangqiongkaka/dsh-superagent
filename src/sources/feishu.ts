@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import { FeishuBotSchema } from '../deployment.ts'
-import { RepositoryBindingsSchema } from '../repositories.ts'
+import { PrimaryRepositorySchema, RepositoryBindingsSchema } from '../repositories.ts'
 import { feishuLink, sendFeishu } from './feishu-channel.ts'
 import { feishuThreadContext } from './feishu-read.ts'
 import { refreshChatNames, runFeishu } from './feishu-loops.ts'
@@ -22,11 +22,12 @@ const MembersSchema = z.looseObject({
 const FeishuConfigSchema = FeishuBotSchema.extend({
   readPageSize: z.number().int().min(1).max(50).default(20),
   linkTimeoutMs: z.number().int().min(1).max(90000).default(5000),
-  chats: z.array(z.object({ chatId: z.string().regex(/^oc_[a-zA-Z0-9]+$/), name: z.string().trim().max(60).optional(), listen: z.enum(['mentions', 'all']), repositories: RepositoryBindingsSchema.optional() }).strict())
+  chats: z.array(z.object({ chatId: z.string().regex(/^oc_[a-zA-Z0-9]+$/), name: z.string().trim().max(60).optional(), listen: z.enum(['mentions', 'all']), repositories: RepositoryBindingsSchema.optional(), primaryRepository: PrimaryRepositorySchema }).strict())
     .refine(chats => new Set(chats.map(chat => chat.chatId)).size === chats.length, 'Duplicate chat IDs')
     .default([]),
   directMessages: z.boolean().default(true),
   directRepositories: RepositoryBindingsSchema.optional(),
+  directPrimaryRepository: PrimaryRepositorySchema,
   otherChats: z.enum(['none', 'mentions']).default('none'),
 }).strict()
 export type FeishuConfig = z.infer<typeof FeishuConfigSchema>
@@ -45,11 +46,13 @@ export const feishuKind: SourceKind<FeishuConfig> = {
         { key: 'chatId', type: 'text', label: { zh: '群', en: 'Chat' }, pattern: 'oc_[a-zA-Z0-9]+', choose: { zh: '选择机器人已加入的群', en: 'Choose a chat the bot has joined' }, refresh: { zh: '刷新群列表', en: 'Refresh chats' } },
         { key: 'listen', type: 'select', label: { zh: '接收', en: 'Receive' }, options: [{ value: 'mentions', label: { zh: '仅 @', en: '@ only' } }, { value: 'all', label: { zh: '全部消息', en: 'All' } }] },
         { key: 'repositories', type: 'text', optional: true, label: { zh: '仓库标识（逗号分隔）', en: 'Repository IDs (comma-separated)' } },
+        { key: 'primaryRepository', type: 'text', optional: true, label: { zh: '主仓库标识（填写后启用 worktree）', en: 'Primary repository ID (enables worktrees)' } },
       ] },
     { key: 'otherChats', type: 'select', label: { zh: '其他群', en: 'Other chats' }, options: [{ value: 'none', label: { zh: '不接收', en: 'Not received' } }, { value: 'mentions', label: { zh: '仅 @', en: '@ only' } }],
       hint: { zh: '机器人已加入、但没列在上面的群。“仅 @”接收那里 @ 机器人的消息；谁的消息能发起工作看策略里的准入。', en: 'Chats the bot has joined that are not listed above. "@ only" receives messages there that mention the bot; whose messages may originate work is the Policy\'s admission.' } },
     { key: 'directMessages', type: 'switch', label: { zh: '接收私聊', en: 'Direct messages' } },
     { key: 'directRepositories', type: 'text', label: { zh: '私聊可用仓库', en: 'Repositories for direct messages' }, hint: { zh: '填写“Git 仓库”中的标识，以逗号分隔。群和私聊未绑定仓库时不能派工，不会回退到 GitHub 来源。', en: 'Comma-separated IDs from Git repositories. Unbound chats cannot start work; no fallback to the GitHub Source.' } },
+    { key: 'directPrimaryRepository', type: 'text', label: { zh: '私聊主仓库标识', en: 'Primary repository for direct messages' }, hint: { zh: '从私聊可用仓库中手工指定。群和私聊填写主仓库后，新工单固定在其 worktree 中建立会话；其他选定仓库各建 worktree 并自动关联。所有绑定仓库须配置已有路径或工作区父目录。留空保留原克隆方式，旧工单不迁移。', en: 'Choose a bound repository manually. New tickets use its worktree as the session directory and automatically link other selected worktrees. Each bound repository needs an existing path or workspace parent. Empty preserves cloning; existing tickets never move.' } },
     { key: 'readPageSize', type: 'number', advanced: true, min: 1, max: 50, label: { zh: '每页消息数', en: 'Messages per page' }, hint: { zh: '智能体读取线程和群历史时，每页的消息数。', en: 'Messages per page when agents read Threads and chat history.' } },
     { key: 'linkTimeoutMs', type: 'number', advanced: true, min: 1, max: 90000, label: { zh: '原消息链接的查询时限 / 毫秒', en: 'Original message link time limit / ms' },
       hint: { zh: '查询原消息链接最多等待的时间；超时后智能体改为直接读取原消息。', en: 'How long to wait for an original message\'s link; after that, agents read the message itself.' } },

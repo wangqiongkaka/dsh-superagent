@@ -23,8 +23,8 @@ export class SettingsConflict extends Error {}
 const now = (): string => new Date().toISOString()
 /** Executor settings that control shell execution paths, prepare commands, and command shims. */
 const environment = ({ executor }: SettingsValue) => JSON.stringify([executor.harness, executor.directory, executor.prepare, executor.blockedCommands])
-const repositoryBindings = (settings: SettingsValue) => JSON.stringify([settings.sources.feishu?.config.directRepositories ?? '',
-  ((settings.sources.feishu?.config.chats ?? []) as { chatId: string; repositories?: string }[]).filter(chat => chat.repositories).map(chat => [chat.chatId, chat.repositories])])
+const repositoryBindings = (settings: SettingsValue) => JSON.stringify([settings.sources.feishu?.config.directRepositories ?? '', settings.sources.feishu?.config.directPrimaryRepository ?? '',
+  ((settings.sources.feishu?.config.chats ?? []) as { chatId: string; repositories?: string; primaryRepository?: string }[]).filter(chat => chat.repositories || chat.primaryRepository).map(chat => [chat.chatId, chat.repositories, chat.primaryRepository])])
 
 /** Schema parser, settings merger, and non-panel origin guard for one settings block kind. */
 interface Block {

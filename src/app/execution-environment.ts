@@ -8,7 +8,7 @@ import type { SourceRegistry } from '../sources/registry.ts'
 
 /** Variables registered by the Executor; `ticket` entries are populated only when a ticket is present. */
 export const EXECUTOR_VARIABLES: readonly (VariableSpec & { ticket?: true })[] = [
-  { key: 'DSH_SUPERAGENT_REPOSITORIES', ticket: true, description: { zh: '工单选定仓库的 JSON 清单；只在这些仓库工作，各仓库位于执行目录下的 id 子目录；使用各自 CLI、账号和邮箱', en: 'JSON manifest of selected repositories. Work only in these repositories, in id subdirectories of the ticket directory. Use each repository CLI, account and email. This overrides legacy single-repository instructions.' } },
+  { key: 'DSH_SUPERAGENT_REPOSITORIES', ticket: true, description: { zh: '工单仓库 JSON 清单；按 directory 访问，只在这些目录工作。primary 表示会话主仓库，branch 表示已创建的 worktree 分支；使用各自 CLI、账号和邮箱', en: 'Repository JSON manifest. Use explicit directory paths, not assumed subdirectories. primary marks the session repository; branch marks an already-created worktree branch. Use each repository CLI, account and email. Overrides legacy single-repository instructions.' } },
   { key: 'DSH_SUPERAGENT_DIR', ticket: true, description: { zh: '这个工单的执行目录；执行器 Session 在其中工作', en: 'This ticket\'s directory; the executor Session works in it' } },
   { key: 'DSH_SUPERAGENT_NAME', ticket: true, description: { zh: '工单的短名，也是执行目录的名字', en: 'The ticket\'s short name, also its directory\'s name' } },
   { key: 'DSH_SUPERAGENT_TICKET', ticket: true, description: { zh: '工单 id', en: 'The ticket id' } },
@@ -45,7 +45,7 @@ export function ticketEnvironment(input: { deployment: Deployment; sources: Sour
     const repositories = ticket.execution.repositories.map(repo => {
       const resolved = rest.deployment.repositories?.find(item => item.id === repo.id && item.url === repo.url && item.provider === repo.provider)
       if (!resolved) throw new Error(`Repository ${repo.id} changed or was disabled; restore its configuration before resuming this ticket`)
-      return { ...resolved, directory: join(values.directory, repo.id) }
+      return { ...resolved, directory: repo.worktree?.directory ?? join(values.directory, repo.id), ...(repo.worktree ? { primary: repo.id === ticket.execution!.primaryRepository, branch: `agent/${ticket.execution!.name}` } : {}) }
     })
     const manifest = variables.find(variable => variable.key === 'DSH_SUPERAGENT_REPOSITORIES')!
     manifest.value = JSON.stringify(repositories)
