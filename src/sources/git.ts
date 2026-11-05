@@ -43,7 +43,7 @@ export const gitKind: SourceKind<GitConfig> = {
     return { threads, terms: [] }
   },
   fields: [
-    { key: 'repositories', type: 'rows', label: { zh: '可用仓库', en: 'Repositories' },
+    { key: 'repositories', type: 'rows', tabs: true, label: { zh: '可用仓库', en: 'Repositories' },
       hint: { zh: '标识例如 idcrm、backend。地址例如 https://github.com/wangqiongkaka/idcrm 或 https://gitlab.example.com/team/backend。CLI 填命令名或绝对路径。保存会检查账号和项目权限并重启。', en: 'Stable IDs such as idcrm or backend; HTTPS project URLs; CLI command names or absolute paths. Saving verifies access and restarts.' },
       columns: [
         { key: 'id', type: 'text', label: { zh: '仓库标识', en: 'ID' }, pattern: '[a-z][a-z0-9-]{0,47}' },

@@ -391,8 +391,8 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-info-warn { color: var(--dsw-alias-state-warn-primary); }
 .dt-field-segmented { max-width: 240px; }
 
-.dt-chat-tabs { overflow-x: auto; }
-.dt-chat-tabs .dt-subtab { white-space: nowrap; flex-shrink: 0; }
+.dt-row-tabs { overflow-x: auto; }
+.dt-row-tabs .dt-subtab { white-space: nowrap; flex-shrink: 0; }
 .dt-rows-item[hidden] { display: none; }
 
 .dt-select:disabled { cursor: not-allowed; opacity: 0.5; }

@@ -4,7 +4,15 @@ import { act } from 'react'
 import { expect, it, onTestFinished, vi } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field, at } from './fixtures/panel.tsx'
+import { gitKind } from '../src/sources/git.ts'
+import type { SourceKind } from '../src/sources/kind.ts'
 import { server, problemOf, droppedReply } from './fixtures/panel-server.ts'
+
+/** Register the Git repositories Source with the repositories a test needs. */
+const useGitRepositories = (...repositories: Record<string, string>[]) => {
+  server.extraKinds = [gitKind as unknown as SourceKind]
+  server.settings.sources.git = { enabled: true, config: { repositories } }
+}
 
 usePanel()
 it('hides disabled legacy settings and labels enabled legacy settings', async () => {
@@ -55,7 +63,7 @@ it('shows every chat as a tab', async () => {
   await mount()
   await click(zh['tab.source'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
-  const tabs = all('.dt-card')[0]!.querySelectorAll('.dt-chat-tabs [role=tab]')
+  const tabs = all('.dt-card')[0]!.querySelectorAll('.dt-row-tabs [role=tab]')
   expect([...tabs].map(tab => tab.textContent)).toEqual(['团队群', 'oc_c1', 'oc_c2', 'oc_c3', 'oc_c4', 'oc_c5', 'oc_c6'])
 })
 
@@ -313,7 +321,7 @@ it.each([1, 6, 7])('switches between %i chat tabs while retaining edits', async 
   }))
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
-  const tabs = () => all('#dt-source-feishu .dt-chat-tabs [role=tab]')
+  const tabs = () => all('#dt-source-feishu .dt-row-tabs [role=tab]')
   const visible = () => all('#dt-source-feishu .dt-rows-item:not([hidden])')
   expect(tabs()).toHaveLength(count)
   expect(visible()).toHaveLength(1)
@@ -327,6 +335,62 @@ it.each([1, 6, 7])('switches between %i chat tabs while retaining edits', async 
   expect(field<HTMLInputElement>('仓库标识（逗号分隔）').value).toBe('backend')
 })
 
+it('shows every Git repository as a tab and switches between them while retaining edits', async () => {
+  useGitRepositories(
+    { id: 'idcrm', provider: 'github', url: 'https://github.com/acme/idcrm', cli: 'gh-agent' },
+    { id: 'backend', provider: 'github', url: 'https://github.com/acme/backend', cli: 'gh-agent' },
+    { id: 'web', provider: 'gitlab', url: 'https://gitlab.example.com/team/web', cli: 'glab' },
+  )
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  const card = () => document.getElementById('dt-source-git')!
+  const tabs = () => card().querySelectorAll<HTMLButtonElement>('.dt-row-tabs [role=tab]')
+  const visible = () => card().querySelectorAll('.dt-rows-item:not([hidden])')
+  expect([...tabs()].map(tab => tab.textContent)).toEqual(['idcrm', 'backend', 'web'])
+  expect(visible()).toHaveLength(1)
+  await type(field<HTMLInputElement>('账号 CLI（gh / glab）'), 'gh-custom')
+  await click(tabs()[2]!)
+  expect(tabs()[2]!.getAttribute('aria-selected')).toBe('true')
+  expect(visible()).toHaveLength(1)
+  await click(tabs()[0]!)
+  expect(field<HTMLInputElement>('账号 CLI（gh / glab）').value).toBe('gh-custom')
+  await remount()
+  expect(card().querySelectorAll('.dt-row-tabs [role=tab]')).toHaveLength(3)
+  expect(field<HTMLInputElement>('账号 CLI（gh / glab）').value).toBe('gh-custom')
+})
+
+it('selects an added Git repository and returns to the previous one after deletion', async () => {
+  useGitRepositories(
+    { id: 'idcrm', provider: 'github', url: 'https://github.com/acme/idcrm', cli: 'gh-agent' },
+    { id: 'backend', provider: 'github', url: 'https://github.com/acme/backend', cli: 'gh-agent' },
+  )
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  const card = () => document.getElementById('dt-source-git')!
+  const add = () => [...card().querySelectorAll('button')].find(button => button.textContent === '添加')!
+  const tabs = () => card().querySelectorAll('.dt-row-tabs [role=tab]')
+  await click(add())
+  const rows = card().querySelectorAll<HTMLElement>('.dt-rows-item')
+  expect(tabs()).toHaveLength(3)
+  expect(rows[0]!.hidden).toBe(true)
+  expect(rows[2]!.hidden).toBe(false)
+  // The last button of a row is its remover; the column hints render buttons too.
+  await click([...rows[2]!.querySelectorAll('button')].at(-1)!)
+  expect(tabs()).toHaveLength(2)
+  expect(card().querySelectorAll<HTMLElement>('.dt-rows-item')[1]!.hidden).toBe(false)
+})
+
+it('shows no repository tabs before the first Git repository is added', async () => {
+  useGitRepositories()
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  const card = () => document.getElementById('dt-source-git')!
+  expect(card().querySelectorAll('.dt-row-tabs')).toHaveLength(0)
+  await click([...card().querySelectorAll('button')].find(button => button.textContent === '添加')!)
+  expect(card().querySelectorAll('.dt-row-tabs [role=tab]')).toHaveLength(1)
+  expect(card().querySelector<HTMLElement>('.dt-rows-item')!.hidden).toBe(false)
+})
+
 it('selects an added chat and returns to the previous chat after deletion', async () => {
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
@@ -336,6 +400,6 @@ it('selects an added chat and returns to the previous chat after deletion', asyn
   expect(rows[0]!.hidden).toBe(true)
   expect(rows[1]!.hidden).toBe(false)
   await click(rows[1]!.querySelector('button')!)
-  expect(form.querySelectorAll('.dt-chat-tabs [role=tab]')).toHaveLength(1)
+  expect(form.querySelectorAll('.dt-row-tabs [role=tab]')).toHaveLength(1)
   expect(form.querySelector<HTMLElement>('.dt-rows-item')!.hidden).toBe(false)
 })
