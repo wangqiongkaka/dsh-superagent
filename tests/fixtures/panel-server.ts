@@ -108,6 +108,8 @@ export interface PanelServer {
   /** Count of responses not yet consumed by the client. */
   pending: number
   form?: ConfigForm<Record<string, unknown>> | undefined
+  /** Extra Source kinds a test registers, such as the Git repositories Source the default fixtures omit. */
+  extraKinds?: SourceKind[]
   opened: string[]
   dropped: DroppedReply[]
   failing: Extract<Problem, { kind: 'outgoing' }>['outgoing'][]
@@ -129,7 +131,7 @@ function healthOf(name: string): Health {
 }
 const problemOf_ = (id: string) => [server.setup.problem, server.setup.feishuProblem].find(item => item?.place === id) ?? undefined
 function sourceSettings(): SourceView[] {
-  return KINDS.map(kind => {
+  return [...KINDS, ...(server.extraKinds ?? [])].map(kind => {
     const config = kind.schema.parse(server.settings.sources[kind.kind]?.config ?? {})
     const problem = problemOf_(kind.kind)
     const { admission: _admission, ...part } = server.settings.policy.sources[kind.kind] ?? { allowed: [], admission: {} }

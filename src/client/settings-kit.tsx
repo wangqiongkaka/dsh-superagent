@@ -172,7 +172,7 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
   const { t, notify } = usePanel()
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(0)
-  const tabbed = field.key === 'chats'
+  const tabbed = field.tabs === true
   const refresh = useAction(async () => {
     try {
       const added = await refreshLabels!()
@@ -228,7 +228,7 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
           blank]) }}>{t('addRow')}</Button>
       </span>
     </div>
-    {tabbed && rows.length > 0 && <div className="dt-subtabs dt-chat-tabs" role="tablist" aria-label={label}>
+    {tabbed && rows.length > 0 && <div className="dt-subtabs dt-row-tabs" role="tablist" aria-label={label}>
       {rows.map((row, index) => <button key={index} type="button" role="tab" className="dt-subtab"
         aria-selected={index === active} onClick={() => setSelected(index)}>{rowName(row) || t('addRow')}</button>)}
     </div>}
