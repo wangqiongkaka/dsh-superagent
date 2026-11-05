@@ -102,6 +102,18 @@ it('routes cleanup only after resolving the ticket', async () => {
   const call = serve({ store: { tickets: { get: (id: string) => id === 't1' ? { id } : undefined } },
     executor: { cleanupWorktrees: async (id: string) => { ids.push(id); return [{ repository: 'repo', removed: true }] } } })
   expect((await call('POST', 'tickets/missing/cleanup-worktrees')).status).toBe(404)
-  expect((await call('POST', 'tickets/t1/cleanup-worktrees')).body).toEqual([{ repository: 'repo', removed: true }])
+  expect((await call('POST', 'tickets/t1/cleanup-worktrees', {})).body).toEqual([{ repository: 'repo', removed: true }])
   expect(ids).toEqual(['t1'])
+})
+
+
+it('validates and forwards ignored-file confirmation', async () => {
+  const requests: unknown[] = []
+  const call = serve({ store: { tickets: { get: () => ({ id: 't1' }) } },
+    executor: { cleanupWorktrees: async (...args: unknown[]) => { requests.push(args); return [] } } })
+  expect((await call('POST', 'tickets/t1/cleanup-worktrees', { ignored: { repository: 'repo', token: 'invalid' } })).status).toBe(400)
+  expect(requests).toEqual([])
+  const ignored = { repository: 'repo', token: 'a'.repeat(64) }
+  expect((await call('POST', 'tickets/t1/cleanup-worktrees', { ignored })).status).toBe(200)
+  expect(requests).toEqual([['t1', ignored]])
 })

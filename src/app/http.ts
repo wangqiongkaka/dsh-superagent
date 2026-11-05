@@ -191,7 +191,11 @@ function routes(runtime: HttpHost): Routes {
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
-    'POST tickets/:id/cleanup-worktrees': ({ params }) => runtime.executor.cleanupWorktrees(ticket(params.id)),
+    'POST tickets/:id/cleanup-worktrees': async ({ params, body }) => {
+      const id = ticket(params.id)
+      const request = z.object({ ignored: z.object({ repository: z.string().min(1), token: z.string().regex(/^[a-f0-9]{64}$/) }).strict().optional() }).strict().parse(await body())
+      return runtime.executor.cleanupWorktrees(id, request.ignored)
+    },
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {

@@ -147,3 +147,24 @@ it('allows only the panel to change the worker Harness', async () => {
     .rejects.toThrow()
   expect(h.runtime.store.settings().executor.harness).toBe('dsh')
 })
+
+it('rejects ended worker turns before a late provider while leaving live turns alone', async () => {
+  h = await startRuntime()
+  const provider = vi.fn(async () => ({ kind: 'enter' as const, messages: [] }))
+  h.ctx.on('agent/pre-step', provider, { prepend: true })
+  const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  await waitUntil(() => bridge.manageSession.mock.calls.length > 0)
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  const agent = h.ctx.agents.get(SessionId(sessionId))!
+  const turn = () => Promise.resolve().then(() => h!.ctx.waterfall('agent/pre-step', {
+    agent, messages: [], turn: 1, step: 1, signal: new AbortController().signal,
+  }, async () => ({ kind: 'enter', messages: [] })))
+  await turn()
+  expect(provider).toHaveBeenCalledTimes(1)
+  h.runtime.engine.stopTicket(ticket.id)
+  await h.runtime.idle()
+  provider.mockRejectedValue(new Error('工单管理接口尚未恢复'))
+  await expect(turn()).rejects.toThrow('该工单已结束，原会话仅供查看')
+  expect(provider).toHaveBeenCalledTimes(1)
+})

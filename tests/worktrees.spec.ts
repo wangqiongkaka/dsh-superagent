@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { prepareWorktree, removeWorktree, worktreeExecution } from '../src/executor/worktrees.ts'
+import { IgnoredWorktreeFiles, prepareWorktree, removeWorktree, worktreeExecution } from '../src/executor/worktrees.ts'
 import { RepositorySchema, validateRepositoryBindings } from '../src/repositories.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { feishu } from './fixtures/host.ts'
@@ -17,6 +17,7 @@ const repo = { id: 'idcrm', provider: 'github' as const, url: 'https://github.co
 const env = gitEnv({ GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_TERMINAL_PROMPT: '0', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' })
 const git = async (cwd: string, ...args: string[]) => (await exec('git', args, { cwd, env })).stdout.trim()
 const run = vi.fn(async (argv: string[], cwd: string) => {
+  if (argv[0] === 'sh') return ''
   const args = argv.slice(1).map(arg => arg === `${repo.url}.git` ? remote : arg)
   return git(cwd, ...args)
 })
@@ -252,4 +253,59 @@ it('returns the canonical path on repeated cleanup without removing another work
   const directory = await removeWorktree(item, 'task-one', run, () => {})
   expect(await removeWorktree(item, 'task-one', run, () => {})).toBe(directory)
   expect(await git(base, 'branch', '--list', 'agent/task-one')).toContain('agent/task-one')
+})
+
+
+it('requires confirmation of the current ignored file list before removal', async () => {
+  const item = checkout(), dir = item.worktree.directory
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  await writeFile(join(base, '.git', 'info', 'exclude'), '*.log\n')
+  await writeFile(join(dir, 'build.log'), 'artifact')
+  const inspect = async () => {
+    try { await removeWorktree(item, 'task-one', run, () => {}) }
+    catch (error) { if (error instanceof IgnoredWorktreeFiles) return error; throw error }
+    throw new Error('expected ignored files')
+  }
+  const first = await inspect()
+  expect(first.paths).toEqual(['build.log'])
+  await writeFile(join(dir, 'test.log'), 'new artifact')
+  await expect(removeWorktree(item, 'task-one', run, () => {}, first.token)).rejects.toBeInstanceOf(IgnoredWorktreeFiles)
+  const current = await inspect()
+  await writeFile(join(dir, 'file.txt'), 'unfinished')
+  await expect(removeWorktree(item, 'task-one', run, () => {}, current.token)).rejects.toThrow('存在修改')
+  await git(dir, 'restore', 'file.txt')
+  await removeWorktree(item, 'task-one', run, () => {}, current.token)
+  await expect(readFile(join(dir, 'build.log'))).rejects.toThrow()
+  expect(await git(base, 'branch', '--list', 'agent/task-one')).toContain('agent/task-one')
+  expect(run.mock.calls.some(([args]) => args.includes('--force'))).toBe(false)
+})
+
+
+it.each(['child', 'parent', 'same', 'unavailable', 'late'])('preserves a worktree when container mount inspection finds %s', async mode => {
+  const item = checkout(), dir = item.worktree.directory
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  let scans = 0
+  const guardedRun = async (argv: string[], cwd: string) => {
+    if (argv[0] === 'sh') return '/bin/docker'
+    if (argv[0] !== '/bin/docker') return run(argv, cwd)
+    if (mode === 'unavailable') throw new Error('daemon unavailable')
+    if (argv[2] === 'ls') return mode === 'late' && ++scans === 1 ? '' : 'abc123'
+    return JSON.stringify({ name: '/backend', mounts: [{ Source: mode === 'parent' ? root : mode === 'same' ? dir : join(dir, 'release'), Destination: '/app' }] })
+  }
+  await expect(removeWorktree(item, 'task-one', guardedRun, () => {})).rejects.toThrow('容器挂载检查未通过')
+  expect(await readFile(join(dir, 'file.txt'), 'utf8')).toBe('initial')
+  expect(run.mock.calls.some(([args]) => args[1] === 'worktree' && args[2] === 'remove')).toBe(false)
+})
+
+it('allows unrelated container mounts without confusing a path prefix with a parent', async () => {
+  const item = checkout()
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  const guardedRun = async (argv: string[], cwd: string) => {
+    if (argv[0] === 'sh') return '/bin/docker'
+    if (argv[0] !== '/bin/docker') return run(argv, cwd)
+    if (argv[2] === 'ls') return 'abc123'
+    return JSON.stringify({ name: '/backend', mounts: [{ Source: item.worktree.directory + '-other', Destination: '/app' }] })
+  }
+  await removeWorktree(item, 'task-one', guardedRun, () => {})
+  await expect(readFile(join(item.worktree.directory, 'file.txt'))).rejects.toThrow()
 })

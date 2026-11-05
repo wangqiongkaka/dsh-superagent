@@ -273,3 +273,24 @@ it('confirms worktree cleanup and displays its result', async () => {
   expect(server.requests.filter(request => request.path === 'tickets/t1/cleanup-worktrees')).toHaveLength(1)
   expect(text()).toContain(zh.worktreeRemoved)
 })
+
+
+it('shows ignored files and requires a second confirmation scoped to their repository', async () => {
+  const ignored = { paths: ['lib/index.js', '.artifacts/before.png'], token: 'a'.repeat(64) }
+  server.cleanupResult = [{ repository: 'example', removed: false, ignored }]
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, canCleanupWorktrees: true }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  await click(zh.cleanupWorktrees)
+  await click(zh.confirm)
+  expect(text()).toContain('lib/index.js')
+  expect(text()).toContain('.artifacts/before.png')
+  await click(zh.cleanupIgnored)
+  expect(server.requests.filter(request => request.path === 'tickets/t1/cleanup-worktrees')).toHaveLength(1)
+  server.cleanupResult = [{ repository: 'example', removed: true }]
+  await click(zh.confirm)
+  expect(server.requests.filter(request => request.path === 'tickets/t1/cleanup-worktrees')[1]).toMatchObject({
+    body: { ignored: { repository: 'example', token: ignored.token } },
+  })
+  expect(text()).toContain(zh.worktreeRemoved)
+})

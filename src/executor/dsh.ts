@@ -11,7 +11,7 @@ import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import { selectRepositories } from '../repositories.ts'
-import { prepareWorktree, removeWorktree, worktreeExecution } from './worktrees.ts'
+import { IgnoredWorktreeFiles, prepareWorktree, removeWorktree, worktreeExecution } from './worktrees.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
@@ -430,7 +430,7 @@ export class DshExecutor implements Executor {
     await until(stop(), undefined, SHUTDOWN_STOP_MS)
   }
   private readonly cleaning = new Set<string>()
-  async cleanupWorktrees(id: string): Promise<{ repository: string; removed: boolean; reason?: string }[]> {
+  async cleanupWorktrees(id: string, ignored?: { repository: string; token: string }): Promise<{ repository: string; removed: boolean; reason?: string; ignored?: { paths: string[]; token: string } }[]> {
     if (this.cleaning.has(id)) throw new Error('该工单正在清理，请稍后再试。')
     const ticket = this.host.store.tickets.get(id)
     if (!ticket?.ended || !ticket.execution?.prepared) throw new Error('只能清理已结束且已准备工作目录的工单。')
@@ -449,17 +449,17 @@ export class DshExecutor implements Executor {
       await assertIdle()
       const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
       const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
-      const results: { repository: string; removed: boolean; reason?: string }[] = []
+      const results: { repository: string; removed: boolean; reason?: string; ignored?: { paths: string[]; token: string } }[] = []
       for (const repo of execution.repositories ?? []) {
-        if (!repo.worktree) continue
+        if (!repo.worktree || (ignored && ignored.repository !== repo.id)) continue
         try {
           const directory = await removeWorktree(repo, execution.name,
-            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env), assertIdle)
+            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env), assertIdle, ignored?.token)
           await assertIdle()
           const workspace = this.host.context.workspaceRegistry.list().find(item => item.path === directory)
           if (workspace) await this.host.context.workspaceRegistry.delete(workspace.id)
           results.push({ repository: repo.id, removed: true })
-        } catch (error) { results.push({ repository: repo.id, removed: false, reason: String(error) }) }
+        } catch (error) { results.push({ repository: repo.id, removed: false, reason: String(error), ...(error instanceof IgnoredWorktreeFiles ? { ignored: { paths: error.paths, token: error.token } } : {}) }) }
       }
       return results
     })()

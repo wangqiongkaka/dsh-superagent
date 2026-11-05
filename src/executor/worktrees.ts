@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { lstat, mkdir, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import { lock } from 'proper-lockfile'
+import { z } from 'zod'
 import type { Execution } from '../core/index.ts'
 import { availableRepositories, primaryRepository, type Repository } from '../repositories.ts'
 import type { Settings } from '../policy.ts'
@@ -102,8 +104,38 @@ export async function prepareWorktree(repo: Checkout, name: string, defaultBranc
   } finally { await release() }
 }
 
+export class IgnoredWorktreeFiles extends Error {
+  constructor(readonly paths: string[], readonly token: string) { super('存在被忽略的文件，请查看清单并确认是否一并删除。') }
+}
+
+/** Docker keeps mounts on stopped containers too; deleting their source breaks the next start. */
+async function assertNoContainerMount(directory: string, run: GitRun, cwd: string): Promise<void> {
+  const canonical = async (path: string): Promise<string> => realpath(path).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT' && dirname(path) !== path) return join(await canonical(dirname(path)), basename(path))
+    throw error
+  })
+  const docker = (await run(['sh', '-c', 'command -v docker || :'], cwd)).trim()
+  if (!docker) return
+  try {
+    const ids = (await run([docker, 'container', 'ls', '-aq'], cwd)).split(/\s+/).filter(Boolean)
+    for (const id of ids) {
+      if (!/^[a-f0-9]+$/.test(id)) throw new Error('无效的容器标识')
+      const container = z.object({ name: z.string(), mounts: z.array(z.object({ Source: z.string().optional(), Destination: z.string() })) }).parse(
+        JSON.parse(await run([docker, 'container', 'inspect', '--format', '{"name":{{json .Name}},"mounts":{{json .Mounts}}}', id], cwd)))
+      for (const mount of container.mounts) {
+        if (!mount.Source || !isAbsolute(mount.Source)) continue
+        const source = await canonical(mount.Source)
+        if (contains(directory, source) || contains(source, directory))
+          throw new Error(`容器 ${container.name.replace(/^\//, '')} 仍挂载 ${mount.Source} → ${mount.Destination}。请先迁移部署产物或解除挂载，目录已保留。`)
+      }
+    }
+  } catch (error) {
+    throw new Error(`容器挂载检查未通过，不能清理 worktree：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
 /** Removes only a clean, published worktree owned by this ticket; never removes its branch. */
-export async function removeWorktree(repo: Checkout, name: string, run: GitRun, assertIdle: () => void | Promise<void>): Promise<string> {
+export async function removeWorktree(repo: Checkout, name: string, run: GitRun, assertIdle: () => void | Promise<void>, ignoredToken?: string): Promise<string> {
   const { base, directory } = repo.worktree!
   const git = async (args: string[], cwd = base) => (await run(['git', ...args], cwd)).trim()
   const common = await realpath(await git(['rev-parse', '--path-format=absolute', '--git-common-dir']))
@@ -140,16 +172,27 @@ export async function removeWorktree(repo: Checkout, name: string, run: GitRun, 
       || await git(['symbolic-ref', '--quiet', 'HEAD'], target) !== `refs/heads/agent/${name}`
       || remoteUrl(await git(['remote', 'get-url', 'origin'])) !== repo.url)
       throw new Error('仓库或分支不属于该工单，已保留。')
-    if (await git(['status', '--porcelain', '--untracked-files=all', '--ignored'], target))
-      throw new Error('存在修改、未跟踪或忽略的文件，已保留。请先保存或自行清理。')
+    await assertNoContainerMount(target, run, base)
+    const ignored = async () => {
+      const raw = await run(['git', 'ls-files', '--others', '--ignored', '--exclude-standard', '-z'], target)
+      return { paths: raw.split('\0').filter(Boolean), token: createHash('sha256').update(raw).digest('hex') }
+    }
+    if (await git(['status', '--porcelain', '--untracked-files=all'], target))
+      throw new Error('存在修改或未跟踪的文件，已保留。请先保存或自行清理。')
+    const snapshot = await ignored()
+    if (snapshot.paths.length && ignoredToken !== snapshot.token)
+      throw new IgnoredWorktreeFiles(snapshot.paths, snapshot.token)
     const head = await git(['rev-parse', 'HEAD'], target)
     await git(['fetch', '--prune', '--no-tags', '--', `${repo.url}.git`, '+refs/heads/*:refs/remotes/origin/*'])
     if (!await git(['for-each-ref', '--format=%(refname)', '--contains', head, 'refs/remotes/origin/']))
       throw new Error('当前提交尚未包含在远端分支中，已保留。')
+    await assertNoContainerMount(target, run, base)
     await assertIdle()
     if (await git(['rev-parse', 'HEAD'], target) !== head
-      || await git(['status', '--porcelain', '--untracked-files=all', '--ignored'], target))
+      || await git(['status', '--porcelain', '--untracked-files=all'], target))
       throw new Error('检查期间目录发生变化，已保留。')
+    const latest = await ignored()
+    if (latest.token !== snapshot.token) throw new IgnoredWorktreeFiles(latest.paths, latest.token)
     await git(['worktree', 'remove', '--', directory])
     return target
   } finally { await release() }

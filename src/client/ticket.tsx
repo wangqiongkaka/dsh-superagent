@@ -107,7 +107,7 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
 
 export function TicketPage({ id }: { id: string }) {
   const { t, call } = usePanel()
-  const [cleanup, setCleanup] = useState<{ repository: string; removed: boolean; reason?: string }[]>([])
+  const [cleanup, setCleanup] = useState<{ repository: string; removed: boolean; reason?: string; ignored?: { paths: string[]; token: string } }[]>([])
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
   const after = async (request: Promise<unknown>) => { await request; await reload() }
   if (!data) return <><PageHead
@@ -194,12 +194,23 @@ export function TicketPage({ id }: { id: string }) {
     {data.canCleanupWorktrees && <div className="dt-danger-zone">
       <ConfirmButton variant="outline" label={t('cleanupWorktrees')} title={t('cleanupWorktrees')}
         message={t('cleanupWorktreesConfirm')} onConfirm={async () => {
-          setCleanup(await call('POST tickets/:id/cleanup-worktrees', { id })); await reload()
+          setCleanup(await call('POST tickets/:id/cleanup-worktrees', { id, body: {} })); await reload()
         }} />
     </div>}
-    {cleanup.map(item => <p key={item.repository} className={item.removed ? 'dt-hint' : 'dt-error'}>
-      {item.repository}：{item.removed ? t('worktreeRemoved') : item.reason}
-    </p>)}
+    {cleanup.map(item => <div key={item.repository}>
+      <p className={item.removed ? 'dt-hint' : 'dt-error'}>{item.repository}：{item.removed ? t('worktreeRemoved') : item.reason}</p>
+      {item.ignored && <>
+        <pre className="dt-cleanup-files">{item.ignored.paths.join('\n')}</pre>
+        <ConfirmButton variant="outline" label={t('cleanupIgnored')} title={t('cleanupIgnored')}
+          message={t('cleanupIgnoredConfirm', { repository: item.repository, count: item.ignored.paths.length })}
+          onConfirm={async () => {
+            const results = await call('POST tickets/:id/cleanup-worktrees', { id, body: { ignored: {
+              repository: item.repository, token: item.ignored!.token } } })
+            setCleanup(current => current.map(previous => results.find(result => result.repository === previous.repository) ?? previous))
+            await reload()
+          }} />
+      </>}
+    </div>)}
     {data.actions.stop && <div className="dt-danger-zone">
       <span className="dt-hint">{t('stopHint')}</span>
       <ConfirmButton variant="outline" label={t('stop')} title={t('stopConfirmTitle')} message={t('stopConfirm', { title: data.title })}

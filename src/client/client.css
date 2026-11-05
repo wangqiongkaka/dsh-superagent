@@ -414,3 +414,5 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
   .dt-select option:disabled { color: var(--dsw-alias-label-caption); cursor: not-allowed; }
   .dt-select option::checkmark { color: var(--dsw-alias-label-primary); }
 }
+
+.dt-cleanup-files { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 20px; }

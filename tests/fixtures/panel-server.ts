@@ -89,6 +89,7 @@ export interface PanelServer {
   joinError?: string
   settings: Settings; revisions: Record<string, number>
   prompts: PromptsView
+  cleanupResult?: Api['POST tickets/:id/cleanup-worktrees']['response']
   tickets: { open: TicketRow[]; ended: TicketRow[] }; ticketDetails: Record<string, TicketPageView>
   threads: ThreadRow[]
   threadPages: (key: string, query: { before?: string; around?: string }) => ThreadPageView | undefined
@@ -333,7 +334,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return ticket.actions.retry ? { retried: true } : refuse(400, 'Only an open ticket can be retried, and only when its worker last reported failed or blocked and no person has sent a message since, or when delivering an Input to its worker failed',
       { code: 'notRetryable', values: {} })
   } },
-  'POST tickets/:id/cleanup-worktrees': { answer: () => [{ repository: 'example', removed: true }] },
+  'POST tickets/:id/cleanup-worktrees': { body: true, answer: () => server.cleanupResult ?? [{ repository: 'example', removed: true }] },
   'POST tickets/:id/stop': { answer: ({ params }) => {
     if (!ticketOf(params.id)) return refuse(404, 'Ticket not found')
     server.tickets.open = []; server.person = server.person.filter(ticket => ticket.id !== params.id)

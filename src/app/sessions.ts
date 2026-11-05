@@ -120,8 +120,16 @@ export class Sessions {
   }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
+    const guardEnded = (scope: Context) => scope.on('agent/pre-step', (payload, next) => {
+      const ticket = this.ticketOf(payload.agent)
+      if (ticket?.ended) throw new Error('该工单已结束，原会话仅供查看。请回到来源话题发送后续请求，由工单流程确认是否继续执行。')
+      return next()
+    }, { prepend: true })
+    guardEnded(this.ctx)
     // The optional provider may be enabled after this plugin and after the native main Session was created.
     this.ctx.inject(['harness' as never], async child => {
+      // Reinstall ahead of the provider's interceptor when the provider is reloaded.
+      guardEnded(child)
       const bridge = harnessOf(child)
       if (this.host.closing() || typeof bridge?.manageSession !== 'function') return
       const current = await this.ctx.sessionController.resolveAgent(this.host.masterId as SessionId)
