@@ -1,6 +1,6 @@
 # 004 Prompts
 
-This document explains what the agents read, what a team can edit, and when changes take effect. It builds on [000 Philosophy](000-philosophy.md) through [003 Execution](003-execution.md). Prompt text is written in English.
+This document explains what the agents read, what a team can edit, and when changes take effect. It builds on [000 Philosophy](000-philosophy.md) through [003 Execution](003-execution.md). Built-in prompt text, skills and generated instructions are written in Chinese; tool names, fields, variables and command syntax retain their original identifiers. Saved team text and historical versions are preserved unless the operator explicitly requests translation.
 
 ## What a team writes
 

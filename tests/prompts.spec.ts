@@ -14,7 +14,7 @@ import type { Variable } from '../src/app/execution-environment.ts'
 
 /** The execution environment outside any ticket, as the runtime passes it once setup has finished. */
 const variables = (): Variable[] => [{ key: 'DSH_SUPERAGENT_GITHUB_REPOSITORY', value: 'acme/widgets', description: { zh: '仓库', en: 'The repository' }, owner: 'github' }]
-const ENVIRONMENT_LINE = '- DSH_SUPERAGENT_GITHUB_REPOSITORY = "acme/widgets": The repository.'
+const ENVIRONMENT_LINE = '- DSH_SUPERAGENT_GITHUB_REPOSITORY = "acme/widgets": 仓库。'
 const promptsOf = (store: Store, maxChars = 100000) => new Prompts(store, () => maxChars, variables, () => true)
 function withStore(body: (store: Store, dir: string) => void): void {
   const dir = mkdtempSync(join(tmpdir(), 'prompts-')); const store = new Store(join(dir, 'db'))
@@ -29,7 +29,7 @@ it('saves team sections and skills as versions that survive a restart, with hist
     expect(prompts.current().config).toEqual(defaultPrompts())
     const config = { ...defaultPrompts(), scope: 'Finish what was asked.', delivery: '', skills: { release: 'Tag releases on Fridays.' } }
     prompts.save(config, 0, 'panel')
-    expect(composePrompt(prompts.current().config, 'worker')).toContain('## Ticket scope\nFinish what was asked.')
+    expect(composePrompt(prompts.current().config, 'worker')).toContain('## 工单范围\nFinish what was asked.')
     // An empty team section leaves the prompt; the fixed sections stay.
     expect(promptParts(config, 'worker').map(part => part.name)).not.toContain('delivery')
     expect(store.get('settings-revision')).toBeUndefined()
@@ -82,7 +82,7 @@ it.each(['orchestrator', 'worker'] as const)('ends the %s prompt with the fixed 
     expect(promptParts(defaultPrompts(), role).at(-1)).toEqual({ name: 'runtime/handoff', kind: 'fixed', key: `runtime/handoff/${role}`,
       text: handoffPolicy(role) })
     expect(preview[role]).toBe(prompts.compose(defaultPrompts(), role))
-    expect(preview[role]).toContain(`${handoffPolicy(role)}\n\nExecution environment`)
+    expect(preview[role]).toContain(`${handoffPolicy(role)}\n\n执行环境`)
     if (role === 'worker') expect(preview[role].endsWith(ENVIRONMENT_LINE)).toBe(true)
     // Nothing follows the main Session's Policy section, so a Policy change leaves the rest of its prompt as it was.
     else expect(preview[role].endsWith(`${ENVIRONMENT_LINE}\n\n${policySection(store.settings()).text}`)).toBe(true)
@@ -104,11 +104,11 @@ it('rejects unknown keys, built-in skill names and oversized configuration befor
 
 it('lists a ticket\'s execution environment in its prompt, and says setup is incomplete before setup finished', () => {
   withStore(store => {
-    const ticket: Variable[] = [{ key: 'DSH_SUPERAGENT_DIR', value: '/srv/work/fix-1', description: { zh: '', en: 'This ticket\'s directory' }, owner: 'executor' }]
-    expect(promptsOf(store).compose(defaultPrompts(), 'worker', ticket).endsWith('- DSH_SUPERAGENT_DIR = "/srv/work/fix-1": This ticket\'s directory.')).toBe(true)
+    const ticket: Variable[] = [{ key: 'DSH_SUPERAGENT_DIR', value: '/srv/work/fix-1', description: { zh: '这个工单的目录', en: 'This ticket\'s directory' }, owner: 'executor' }]
+    expect(promptsOf(store).compose(defaultPrompts(), 'worker', ticket).endsWith('- DSH_SUPERAGENT_DIR = "/srv/work/fix-1": 这个工单的目录。')).toBe(true)
     expect(promptParts(defaultPrompts(), 'worker', 'env').at(-1)).toEqual({ name: 'runtime/environment', kind: 'generated', key: 'runtime/environment',
       text: 'env' })
-    expect(new Prompts(store, () => 100000, () => undefined, () => false).compose(defaultPrompts(), 'worker')).toContain('dsh-superagent is waiting for setup')
+    expect(new Prompts(store, () => 100000, () => undefined, () => false).compose(defaultPrompts(), 'worker')).toContain('dsh-superagent 正在等待配置')
   })
 })
 
@@ -117,7 +117,7 @@ it('registers the built-in Source skills, Feishu only with a Feishu bot, before 
     const config = { ...defaultPrompts(), skills: { release: 'Tag releases.' } }
     const skills = promptsOf(store).skills(config)
     expect(skills.map(([name]) => name)).toEqual(['feishu', 'github', 'release'])
-    expect(skills[1]![1]).toContain('## CLI usage')
+    expect(skills[1]![1]).toContain('## CLI 用法')
     expect(skills[2]![1]).toBe('Tag releases.')
     expect(new Prompts(store, () => 100000, variables, () => false).skills(config).map(([name]) => name)).toEqual(['github', 'release'])
   })
@@ -180,7 +180,7 @@ describe('overrides of built-in parts', () => {
       const prompts = promptsOf(store)
       // An override edited from today's built-in text has nothing to show.
       const saved = prompts.save(config({ 'runtime/dispatch': { text: '## dispatch\nRoute well.' } }), 0, 'panel')
-      expect(saved.config.overrides!['runtime/dispatch']!.base).toBe(builtInBase(`## dispatch\n${guides.dispatch}`))
+      expect(saved.config.overrides!['runtime/dispatch']!.base).toBe(builtInBase(`## 派工\n${guides.dispatch}`))
       expect(prompts.defaultChanged(saved.config)).toEqual([])
       // One edited from a built-in text an earlier version shipped, which this installation kept when it was saved.
       const earlier = '## replies\nAn earlier built-in text.'
@@ -240,8 +240,8 @@ describe('overrides of built-in parts', () => {
   it('keeps the environment heading as it was, naming the prepare command', () => {
     expect(composePrompt(defaultPrompts(), 'worker', 'x')).not.toContain('The prepare command')
     withStore(store => {
-      expect(promptsOf(store).compose(defaultPrompts(), 'worker')).toContain('an empty value means that part is not configured here). '
-        + `The prepare command of a ticket directory reads the same variables:\n${ENVIRONMENT_LINE}`)
+      expect(promptsOf(store).compose(defaultPrompts(), 'worker')).toContain('空值表示此处尚未配置）。'
+        + `工单目录的准备命令读取相同变量：\n${ENVIRONMENT_LINE}`)
     })
   })
 })

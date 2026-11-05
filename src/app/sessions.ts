@@ -196,8 +196,8 @@ export class Sessions {
           if (!active()) throw new Error('Ticket assignment ended')
           const version = this.promptFor(result.agent, true)
           return { instructions: this.instructions(result.agent, true)
-            + '\n\nUse the orchestrator_* tools on the dsh-superagent MCP server for acknowledgements, questions and reports. '
-            + 'The operational skills below are already loaded; do not try to load them with a separate skill tool.\n'
+            + '\n\n确认、提问和报告使用 dsh-superagent MCP 服务器上的 orchestrator_* 工具。'
+            + '以下操作技能已加载，不要再用单独的技能工具加载。\n'
             + this.host.prompts.skills(version.config).map(([name, text]) => `\n## ${SKILL_PREFIX}${name}\n${text}`).join('\n'),
           environment: { ...process.env }, mcpServers: [mcp] }
         } })

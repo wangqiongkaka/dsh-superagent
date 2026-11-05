@@ -91,9 +91,7 @@ export const sourceTrigger = (host: { store: Pick<Store, 'triggers'> }, ticket: 
  * rules (`strength === 'inferred'`), restricts authorization to small internal changes within the rule scope; returns `''` for explicit requests.
  */
 export function mandateInstructions(mandate: Pick<Mandate, 'strength'>): string {
-  return mandate.strength === 'inferred' ? 'This ticket has limited proactive authorization. Independently verify that it is a small change '
-    + 'internal to one module within the accepted rule scope. If it requires public-interface or behavior changes, new interaction, product '
-    + 'decisions or clarification, stop and report dropped; do not expand scope.' : ''
+  return mandate.strength === 'inferred' ? '本工单仅获有限的主动授权。独立确认它属于已接纳规则范围内、单个模块内部的小改动。若需要变更公共接口或行为、新增交互、作出产品决定或澄清，则停止并报告 dropped；不得扩大范围。' : ''
 }
 /** Builds a newly accepted ticket's Execution metadata: its worktree name, workspace directory, and assignment text. */
 export function ticketExecution(ticket: Ticket, outcome: Extract<AssessmentOutcome, { kind: 'accept' }>, settings: Settings,

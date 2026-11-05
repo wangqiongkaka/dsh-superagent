@@ -318,7 +318,9 @@ function migratePrompts(store: Store): void {
   const revision = store.get<number>('prompt-revision')
   const current = revision === undefined ? undefined : store.get<PromptVersion>(`prompt-version:${revision}`)
   const config = current?.config ?? { ...teamDefaults, skills: {} }
+  const oldThreshold = 'it changes fewer than 200 lines (additions plus deletions);'
   const delivery = config.delivery.includes(autoMergeThreshold(200)) ? config.delivery.replace(autoMergeThreshold(200), autoMergeThreshold(limit))
+    : config.delivery.includes(oldThreshold) ? config.delivery.replace(oldThreshold, `it changes fewer than ${limit} lines (additions plus deletions);`)
     : limit === 200 ? config.delivery : `${config.delivery}\nEnable auto-merge only on a PR that changes fewer than ${limit} lines (additions plus deletions).`
   const identities = mapped.length && !config.skills.identities ? { identities: ['The same colleague may use a different account on each Source. When you mention, assign or request a review from someone you met on another Source, use their account on this one:',
     ...mapped.map(person => `- ${person.name ?? person.feishuId} (Feishu ${person.feishuId}) is @${person.github} on GitHub`)].join('\n') } : {}

@@ -664,7 +664,7 @@ it('describes rule edits in the Policy history and skips Policy syncs that chang
   await runtime.settings.sync('feishu')
   expect(revision()).toBe(before)
   await runtime.settings.save('policy', { ...runtime.store.settings().policy, rules: [{ ...settings.policy.rules[0]!, name: '文案' }, { ...settings.policy.rules[1]!, enabled: false }, { id: 'docs', name: '文档', enabled: true, instruction: 'x' }] }, runtime.store.blockRevision('policy'), 'panel')
-  expect(policyHistory(runtime.store, runtime.sources, policyVersion(runtime.store.settings())).items[0]!.changes).toEqual([{ code: 'ruleRenamed', from: 'Copy fixes', to: '文案' }, { code: 'ruleDisabled', name: 'Visual fixes' }, { code: 'ruleAdded', name: '文档' }])
+  expect(policyHistory(runtime.store, runtime.sources, policyVersion(runtime.store.settings())).items[0]!.changes).toEqual([{ code: 'ruleRenamed', from: '文案修复', to: '文案' }, { code: 'ruleDisabled', name: '视觉修复' }, { code: 'ruleAdded', name: '文档' }])
 })
 
 it('records an admission table change in the Policy history as one line for its Source, with a new Policy version', async () => {
@@ -1029,7 +1029,7 @@ it('tells both roles the execution environment through a generated prompt sectio
   // Outside a ticket there is no ticket directory.
   expect(section.text).not.toContain('DSH_SUPERAGENT_DIR')
   // The main Session's Policy section follows it.
-  expect(preview.orchestrator).toContain(`${section.text}\n\n## Policy`)
+  expect(preview.orchestrator).toContain(`${section.text}\n\n## 策略`)
   const { ticket, sessionId } = await acceptedTicket()
   expect(sections.get(sessionId)!.text({})).toContain(`- DSH_SUPERAGENT_DIR = ${JSON.stringify(ticket.execution!.directory)}`)
   expect(sections.get(runtime.masterId)!.text({})).not.toContain('DSH_SUPERAGENT_DIR')
@@ -1077,10 +1077,10 @@ it('leaves auto-merge to the delivery requirements, with the agent\'s own gh and
   expect(runtime.ticketEnvironment(ticket).map(variable => variable.key)).not.toContain('DSH_SUPERAGENT_GITHUB_MERGE_ACCOUNT')
   expect(ticket.mandate).not.toHaveProperty('autoMergeLineLimit')
   const delivery = runtime.prompts.current().config.delivery
-  expect(delivery).toContain('it changes fewer than 200 lines (additions plus deletions);')
+  expect(delivery).toContain("有合并 CLI 时，只有以下条件全部成立，才能对你从工单分支创建的 PR 的头提交开启自动合并：PR 已就绪；改动少于 200 行（新增行数加删除行数）；指令要求的每项批准都覆盖该提交；若改变用户可见内容，指令已指定谁批准此类改动，且其批准覆盖该提交。")
   // Auto-merge is never enabled as the agent account; only a merge CLI the section names enables it.
-  expect(delivery).toContain('Never enable auto-merge as the agent account')
-  expect(delivery).toContain('<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha>')
+  expect(delivery).toContain("不得用智能体账号开启自动合并，以免智能体合并自己的工作：仅使用本节指定的合并 CLI，命令为 `<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha> --repo $DSH_SUPERAGENT_GITHUB_REPOSITORY`。")
+  expect(delivery).toContain("不得用智能体账号开启自动合并，以免智能体合并自己的工作：仅使用本节指定的合并 CLI，命令为 `<merge CLI> pr merge <number> --auto --merge --match-head-commit <sha> --repo $DSH_SUPERAGENT_GITHUB_REPOSITORY`。")
   expect(runtime.prompts.preview(runtime.prompts.current().config).worker).not.toContain('gh-merge')
 })
 
@@ -1141,11 +1141,11 @@ it('runs a GitHub-only deployment: the GitHub part of the Policy decides alone, 
 
 it('credits each human reviewer once in the default delivery requirements on every commit of the PR, never with an empty commit', async () => {
   const delivery = runtime.prompts.current().config.delivery
-  expect(delivery).toContain('Co-authored-by: <name or login> <id+login@users.noreply.github.com>')
-  expect(delivery).toContain('on every commit of the PR branch')
+  expect(delivery).toContain("对每位审核你所创建 PR 的人工审核者，在 PR 分支的每个提交中署名，每个 PR 每人一次：首次评估其反馈时改写分支，使每个提交为截至当时所有已署名人员各包含一条 `Co-authored-by: <name or login> <id+login@users.noreply.github.com>`，其中 id 从 `gh api users/<login> --jq .id` 获取。")
+  expect(delivery).toContain('在 PR 分支的每个提交中署名')
   expect(delivery).toContain('git filter-branch -f --msg-filter')
-  expect(delivery).toContain('Never push an empty commit to credit a reviewer.')
-  expect(delivery).toContain('Do not credit bots')
+  expect(delivery).toContain("不得为署名推送空提交。")
+  expect(delivery).toContain('不要为机器人')
 })
 
 it('shows a failed reply as a problem with its attempts, an error of the reply effects after three, until it is withdrawn', async () => {
@@ -1538,7 +1538,7 @@ it('refuses the main Session a bash command that runs sleep and a long job wait,
   const { sessionId } = await acceptedTicket()
   expect(guards.get(sessionId)!(bash('sleep 60'))).toBeUndefined()
   // The main Session's role says so.
-  expect(masterPrompt).toContain('Worker reports, follow_up notices, new candidates and a background job\'s end, with its output, arrive by themselves as messages')
+  expect(masterPrompt).toContain("执行器报告、follow_up 通知、新候选和后台任务完成及其输出都会自动作为消息送达：不得通过 sleep、轮询或等待任务来等候；没有待办时结束当前回合。")
 })
 
 it('reads the main Session\'s preset from a registry with or without presetForSession, and takes standard\'s caps when it cannot', async () => {
@@ -1777,32 +1777,32 @@ it('ends the main Session\'s prompt with its Policy section, each rule on one li
     ? { ...rule, name: 'Copy\nfixes', instruction: 'Fix typos.\n- Keep the tone.\n\n## Not a heading' } : rule)
   await runtime.settings.save('policy', { ...settings.policy, rules }, runtime.store.blockRevision('policy'), 'panel')
   const prompt = (sections.get(runtime.masterId)!.text as (context: object) => string)({})
-  const policy = prompt.slice(prompt.indexOf('## Policy'))
+  const policy = prompt.slice(prompt.indexOf('## 策略'))
   // Nothing follows the section, whose lines after its head are exactly the enabled rules.
   expect(policy.trimEnd().split('\n').slice(2)).toEqual(runtime.store.settings().policy.rules.filter(rule => rule.enabled)
     .map(rule => rule.id === 'copy' ? '- Copy fixes (copy): Fix typos. - Keep the tone. ## Not a heading' : `- ${rule.name} (${rule.id}): ${rule.instruction}`))
-  expect(prompt.indexOf('## Policy')).toBeGreaterThan(prompt.indexOf('Execution environment'))
+  expect(prompt.indexOf('## 策略')).toBeGreaterThan(prompt.indexOf('执行环境'))
   expect((tools.get(runtime.masterId)!.get('orchestrator_eval') as unknown as { description: string }).description).not.toMatch(/rules/)
 })
 
 it('keeps the Policy the main Session judges by in its prompt, after admission and the rest, as the latest save left it', async () => {
   const prompt = () => (sections.get(runtime.masterId)!.text as (context: object) => string)({})
-  const policy = () => { const text = prompt(), at = text.indexOf('## Policy'); return text.slice(at, text.indexOf('\n\n', at)) }
+  const policy = () => { const text = prompt(), at = text.indexOf('## 策略'); return text.slice(at, text.indexOf('\n\n', at)) }
   const settings = runtime.store.settings()
   const line = (rule: { id: string; name: string; instruction: string }) => `- ${rule.name} (${rule.id}): ${rule.instruction}`
-  expect(prompt().indexOf('## Policy')).toBeGreaterThan(prompt().indexOf('Assess proactive candidates yourself'))
+  expect(prompt().indexOf('## 策略')).toBeGreaterThan(prompt().indexOf('主动候选'))
   expect(policy().split('\n').filter(item => item.startsWith('- '))).toEqual(settings.policy.rules.filter(rule => rule.enabled).map(line))
-  expect(policy()).toContain(`Policy version ${policyVersion(settings)}; accept mode ${settings.eval.mode}.`)
+  expect(policy()).toContain(`策略版本 ${policyVersion(settings)}；接单模式 ${settings.eval.mode}。`)
   // The rules govern proactive candidates only; read beside an explicit request, they must not be taken to refuse it.
-  expect(policy()).toContain('The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.')
+  expect(policy()).toContain('接单模式和规则仅决定主动候选：无论模式或规则如何，明确请求均按派工指令路由。')
   // A save changes it from the next request: one rule disabled, the other's instruction changed.
   const rules = settings.policy.rules.map(rule => rule.id === 'copy' ? { ...rule, instruction: `${rule.instruction} Keep it short.` } : { ...rule, enabled: false })
   await runtime.settings.save('policy', { ...settings.policy, rules }, runtime.store.blockRevision('policy'), 'panel')
   const saved = runtime.store.settings()
-  expect(policy()).toContain(`Policy version ${policyVersion(saved)}`)
+  expect(policy()).toContain(`策略版本 ${policyVersion(saved)}`)
   expect(policy().split('\n').filter(item => item.startsWith('- '))).toEqual(rules.filter(rule => rule.enabled).map(line))
   // With no rule enabled, a proactive candidate can only be ignored.
   await runtime.settings.save('policy', { ...saved.policy, rules: rules.map(rule => ({ ...rule, enabled: false })) }, runtime.store.blockRevision('policy'), 'panel')
-  expect(policy()).toContain('No rule is enabled: a proactive candidate can only be ignored.')
-  expect(policy()).toContain('The accept mode and the rules decide proactive candidates only')
+  expect(policy()).toContain('没有启用规则：主动候选只能忽略。')
+  expect(policy()).toContain('接单模式和规则仅决定主动候选')
 })

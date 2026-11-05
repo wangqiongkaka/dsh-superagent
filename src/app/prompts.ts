@@ -14,7 +14,7 @@ import { KV } from '../kv.ts'
 export const TEAM_SECTIONS = ['communication', 'scope', 'delivery'] as const
 export type TeamSection = typeof TEAM_SECTIONS[number]
 /** Markdown headings for each team section; fixed prompt sections refer to them by these exact names. */
-const TEAM_HEADINGS: Record<TeamSection, string> = { communication: 'Communication', scope: 'Ticket scope', delivery: 'Delivery requirements' }
+const TEAM_HEADINGS: Record<TeamSection, string> = { communication: '沟通', scope: '工单范围', delivery: '交付要求' }
 export const SKILL_NAME = /^[a-z][a-z0-9-]*$/
 /** Prefix prepended to skill names when registering them in DSH Sessions. */
 export const SKILL_PREFIX = 'dsh-superagent-'
@@ -41,8 +41,8 @@ export interface PromptVersion { revision: number; previousRevision: number | nu
   legacy?: { config: unknown } }
 export const defaultPrompts = (): PromptConfig => ({ ...teamDefaults, skills: {} })
 
-const ENVIRONMENT_HEADING = 'Execution environment (from this installation\'s settings; it takes precedence over any repository or account named elsewhere in these instructions; an empty value means that part is not configured here). The prepare command of a ticket directory reads the same variables:'
-const POLICY_HEAD = '## Policy\nPolicy version {version}; accept mode {mode}. The accept mode and the rules decide proactive candidates only: an explicit request is routed as dispatch says, in any mode and whatever the rules.'
+const ENVIRONMENT_HEADING = '执行环境（来自本部署设置，优先于指令其他位置提到的仓库或账号；空值表示此处尚未配置）。工单目录的准备命令读取相同变量：'
+const POLICY_HEAD = '## 策略\n策略版本 {version}；接单模式 {mode}。接单模式和规则仅决定主动候选：无论模式或规则如何，明确请求均按派工指令路由。'
 type Role = 'orchestrator' | 'worker'
 /** A built-in part a team may override: the roles that read it, its text, and the placeholders a template's override keeps. */
 interface BuiltInPart { roles: readonly Role[]; text: string; placeholders?: readonly string[] }
@@ -55,18 +55,18 @@ let parts: Readonly<Record<PartKey, BuiltInPart>> | undefined
 export const builtInParts = (): Readonly<Record<PartKey, BuiltInPart>> => parts ??= {
   'runtime/shared': { roles: BOTH, text: sharedPrompt }, 'runtime/orchestrator': { roles: MAIN, text: masterPrompt },
   'runtime/worker': { roles: WORKER, text: workerPrompt },
-  'runtime/subscriptions': { roles: BOTH, text: `## subscriptions\n${guides.subscriptions}` },
-  'runtime/replies': { roles: BOTH, text: `## replies\n${guides.replies}` },
-  'runtime/dispatch': { roles: MAIN, text: `## dispatch\n${guides.dispatch}` }, 'runtime/work': { roles: WORKER, text: `## work\n${guides.work}` },
+  'runtime/subscriptions': { roles: BOTH, text: `## 订阅\n${guides.subscriptions}` },
+  'runtime/replies': { roles: BOTH, text: `## 回复\n${guides.replies}` },
+  'runtime/dispatch': { roles: MAIN, text: `## 派工\n${guides.dispatch}` }, 'runtime/work': { roles: WORKER, text: `## 执行\n${guides.work}` },
   'runtime/admission': { roles: MAIN, text: mainAdmissionPolicy },
   'runtime/handoff/orchestrator': { roles: MAIN, text: handoffPolicy('orchestrator') },
   'runtime/handoff/worker': { roles: WORKER, text: handoffPolicy('worker') },
   'runtime/environment': { roles: BOTH, text: `${ENVIRONMENT_HEADING}\n{variables}`, placeholders: ['{variables}'] },
-  'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} The enabled rules, by name and id:\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
-  'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} No rule is enabled: a proactive candidate can only be ignored.`,
+  'runtime/policy': { roles: MAIN, text: `${POLICY_HEAD} 启用规则如下，包含名称和 ID：\n{rules}`, placeholders: ['{version}', '{mode}', '{rules}'] },
+  'runtime/policy/none': { roles: MAIN, text: `${POLICY_HEAD} 没有启用规则：主动候选只能忽略。`,
     placeholders: ['{version}', '{mode}'] },
-  'skill/feishu': { roles: BOTH, text: `${sourceSkills.feishu}\n\n## CLI usage\n${cliNotes}` },
-  'skill/github': { roles: BOTH, text: `${sourceSkills.github}\n\n## CLI usage\n${cliNotes}` },
+  'skill/feishu': { roles: BOTH, text: `${sourceSkills.feishu}\n\n## CLI 用法\n${cliNotes}` },
+  'skill/github': { roles: BOTH, text: `${sourceSkills.github}\n\n## CLI 用法\n${cliNotes}` },
 }
 /** The key of a built-in text, which an override's `base` records. */
 export const builtInBase = (text: string): string => key('prompt-built-in', text)
@@ -82,7 +82,7 @@ const fill = (template: string, values: Record<string, string>): string =>
 /** The execution environment part: its template with the variables, or, while setup waits, that it waits. */
 export function environmentSection(config: PromptConfig, variables: Variable[] | undefined): string {
   return variables ? fill(builtIn(config, 'runtime/environment'), { variables: environmentLines(variables) })
-    : 'Execution environment: dsh-superagent is waiting for setup; the management panel names what is missing.'
+    : '执行环境：dsh-superagent 正在等待配置；管理面板列出了缺失项目。'
 }
 /**
  * The main Session's Policy section: the Policy version and accept mode it judges proactive candidates by, and every enabled
@@ -197,7 +197,7 @@ export class Prompts {
     const environment = environmentSection(config, this.environment()), policy = policySection(this.store.settings(), config)
     return { orchestrator: composePrompt(config, 'orchestrator', environment, policy), worker: composePrompt(config, 'worker', environment),
       parts: { orchestrator: promptParts(config, 'orchestrator', environment, policy), worker: promptParts(config, 'worker', environment) },
-      skills: Object.fromEntries(this.skills(config)), scope: 'Team sections, skills, and overrides of built-in parts, which follow their built-in text until overridden. Workers additionally inherit the host prompt and repository AGENTS.md. Prompt text changes what the agents are told, not what dsh-superagent allows: tool permissions, the gate and account wrappers stay.' }
+      skills: Object.fromEntries(this.skills(config)), scope: '团队段落、技能和内置段落覆盖；未覆盖的部分跟随内置文本。执行器还继承宿主提示词和仓库 AGENTS.md。提示词只改变告诉智能体的内容，不改变 dsh-superagent 允许的操作：工具权限、准入检查和账号包装器保持不变。' }
   }
   save(value: unknown, baseRevision: number, source: SettingsOrigin): PromptVersion {
     const config = this.validate(value)

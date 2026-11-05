@@ -8,7 +8,7 @@ import type { SourceRegistry } from '../sources/registry.ts'
 
 /** Variables registered by the Executor; `ticket` entries are populated only when a ticket is present. */
 export const EXECUTOR_VARIABLES: readonly (VariableSpec & { ticket?: true })[] = [
-  { key: 'DSH_SUPERAGENT_REPOSITORIES', ticket: true, description: { zh: '工单仓库 JSON 清单；按 directory 访问，只在这些目录工作。primary 表示会话主仓库，branch 表示已创建的 worktree 分支；使用各自 CLI、账号和邮箱', en: 'Repository JSON manifest. Use explicit directory paths, not assumed subdirectories. primary marks the session repository; branch marks an already-created worktree branch. Use each repository CLI, account and email. Overrides legacy single-repository instructions.' } },
+  { key: 'DSH_SUPERAGENT_REPOSITORIES', ticket: true, description: { zh: '工单仓库 JSON 清单；按 directory 访问，只在这些目录工作。primary 表示会话主仓库，branch 表示已创建的 worktree 分支；使用各自 CLI、账号和邮箱；覆盖旧版单仓库指令', en: 'Repository JSON manifest. Use explicit directory paths, not assumed subdirectories. primary marks the session repository; branch marks an already-created worktree branch. Use each repository CLI, account and email. Overrides legacy single-repository instructions.' } },
   { key: 'DSH_SUPERAGENT_DIR', ticket: true, description: { zh: '这个工单的执行目录；执行器 Session 在其中工作', en: 'This ticket\'s directory; the executor Session works in it' } },
   { key: 'DSH_SUPERAGENT_NAME', ticket: true, description: { zh: '工单的短名，也是执行目录的名字', en: 'The ticket\'s short name, also its directory\'s name' } },
   { key: 'DSH_SUPERAGENT_TICKET', ticket: true, description: { zh: '工单 id', en: 'The ticket id' } },
@@ -54,5 +54,5 @@ export function ticketEnvironment(input: { deployment: Deployment; sources: Sour
   return variables
 }
 export function environmentLines(variables: Variable[]): string {
-  return variables.map(variable => `- ${variable.key} = ${JSON.stringify(variable.value)}: ${variable.description.en}.`).join('\n')
+  return variables.map(variable => `- ${variable.key} = ${JSON.stringify(variable.value)}: ${variable.description.zh}。`).join('\n')
 }

@@ -63,7 +63,7 @@ const MEMBER = 'ou_alice', CHAT = 'oc_team'
 const feishu = (id: string, text: string, overrides: Record<string, unknown> = {}) => feishuTrigger({ message_id: `om_${id}`, chat_id: CHAT,
   chat_type: 'group', sender_id: MEMBER, sender_type: 'user', content: text, mentions: [{ id: 'ou_bot' }],
   create_time: String(Date.parse('2026-09-09T00:00:00Z') + Number(id) * 1000), ...overrides }, 'ou_bot', 'cli_bot')!
-const sentences = (text: string) => text.split(/(?<=[.!?])\s+|\n+/)
+const sentences = (text: string) => text.split(/(?<=[.!?])\s+|(?<=[。！？])\s*|\n+/)
 const words = (count: number) => Array.from({ length: count }, () => 'word').join(' ')
 
 /** Start a configured Runtime on a fake DSH host (as in tests/runtime.spec.ts) that records registered tools, prompts, skills, and delivered messages per session. */
@@ -329,16 +329,16 @@ function failures(): Map<string, string> {
       if (word!.split('/').some(part => REPORT_WORDS.test(part)) && !(TICKET_STATES as readonly string[]).includes(word!)) fail(`"${phrase}" is not a card state`)
     }
     for (const [phrase] of text.matchAll(/\bwait(?:ing)? for (?:ready|waiting|blocked|failed)\b(?! report)/g)) fail(`"${phrase}" names a report state without report`)
-    for (const [found] of text.matchAll(/\b(?:ticket|trigger|decision|prompts|prompt-preview|models|feishu|github)\/[^\s"'`,;)\]]*/g)) {
+    for (const [found] of text.matchAll(/\b(?:ticket|trigger|decision|prompts|prompt-preview|models|feishu|github)\/[^\s"'`,;)\]。；，、：]*/g)) {
       const name = found.replace(/[.:]+$/, '')
       if (!RESOURCE_NAMES.some(pattern => pattern.test(name))) fail(`${name} is not a resource orchestrator_read reads`)
     }
     // Text only one role reads names the other role's tools only in a sentence that says the other role uses them.
     const other = role === 'orchestrator' ? 'worker' : role === 'worker' ? 'orchestrator' : undefined
-    const names = other === 'worker' ? /\b(workers?|executors?)\b/i : /\b(orchestrator|main session)\b/i
+    const names = other === 'worker' ? /\b(workers?|executors?)\b|执行器/i : /\b(orchestrator|main session)\b|主 Session|编排器/i
     for (const sentence of sentences(text)) {
-      for (const [, count] of sentence.matchAll(/\b(\d+)[- ]words?\b/g)) {
-        const limit = /routing/i.test(sentence) ? NOTE_WORDS : IM_WORDS
+      for (const [, count] of sentence.matchAll(/\b(\d+)(?:[- ]words?\b|\s*词)/g)) {
+        const limit = /routing|路由/i.test(sentence) ? NOTE_WORDS : IM_WORDS
         if (Number(count) !== limit) fail(`"${count} words" is not ${limit}`)
       }
       for (const [token] of other && !names.test(sentence) ? sentence.matchAll(/\borchestrator_[a-z_]+/g) : []) {
@@ -402,13 +402,13 @@ it.each(['orchestrator', 'worker'] as const)('keeps the %s within its character 
 it('keeps the routing rules in dispatch, which says the main Session may accept the rest of a stop message as new work', () => {
   const route = toolsOf('orchestrator').get('orchestrator_route')!.description
   const dispatch = surfaces.find(surface => surface.where === 'orchestrator prompt runtime/dispatch')!.text
-  expect(dispatch).toContain('you may accept the rest of the message as new work')
-  expect(dispatch).toContain('decide those whose card already settles them in one orchestrator_route call')
+  expect(dispatch).toContain("停止使工单结束后，可以按明确请求接受消息中的剩余部分为新工作。")
+  expect(dispatch).toContain("多个候选等待时，将仅凭卡片即可决定的候选一次性提交给 orchestrator_route，每项对应一个候选；只有确有需要的候选才先读取上下文或调用 orchestrator_eval，并将这些调用与路由调用一同发出。")
   expect(route).not.toMatch(/needs a new ticket on another explicit instruction/)
 })
 
 it('lists in the main Session\'s Policy section exactly the enabled rules, as the drive\'s save left them', () => {
-  const text = host.sections.get(host.runtime.masterId)!({}), at = text.indexOf('## Policy')
+  const text = host.sections.get(host.runtime.masterId)!({}), at = text.indexOf('## 策略')
   const listed = text.slice(at, text.indexOf('\n\n', at)).split('\n').filter(line => line.startsWith('- '))
   expect(listed).toEqual(ruleLines())
   // The drive disabled the visual rule and changed the copy rule's instruction.

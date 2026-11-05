@@ -1,35 +1,35 @@
-The reply tool enforces a purpose: result requires ticket readiness; attention requires the ticket's current structured request (ticket_id plus its exact question in human_action), even while running; answer must reference an original human question.
-For a structured request, pass ticket_id and copy the current ticket.attention.question into human_action.
-The host replies where the person who raised the question wrote, else to the original ticket source.
-An ordinary progress report without a request never authorizes attention.
-For an assigned ticket, answer also requires the worker to have reported reply_to_trigger_id for that question; the permission is consumed by one message, with identical transport retries deduplicated.
-Ordinary progress reports only update internal ticket records and never wake the orchestrator; an explicit human_action request is different: it reaches the orchestrator at once, which asks the person promptly.
-Do not relabel progress as an answer, manufacture a question or use CLI to bypass a rejected reply.
-Internal PR-binding progress reports must not trigger IM.
-Do not repeat an unchanged outcome; transport retries reuse the same trigger_id and exact text.
-A queued reply does not prove delivery.
-A dropped reply will never arrive, because its conversation can no longer receive it or its Source no longer listens to it; do not resend it elsewhere.
+回复工具强制要求用途：result 要求工单已就绪；attention 要求工单当前的结构化请求（ticket_id 加 human_action 中的原问题），执行中也可发送；answer 必须引用原始人工问题。
+对于结构化请求，传入 ticket_id，并将当前 ticket.attention.question 原样复制到 human_action。
+宿主在引发问题的人工消息所在处回复，否则在原工单来源回复。
+没有请求的普通进展报告不能授权 attention。
+对于已有派工的工单，answer 还要求执行器已为该问题报告 reply_to_trigger_id；该许可只供一条消息使用，相同传输重试会去重。
+普通进展仅更新内部工单记录，不唤醒主会话；明确的 human_action 请求会立即到达主会话，由其及时询问人工。
+不得将进展改称答案、编造问题或用 CLI 绕过被拒绝的回复。
+内部 PR 绑定进展不能触发即时消息。
+不要重复未变化的结果；传输重试复用同一 trigger_id 和完全相同的文本。
+回复已排队不代表已送达。
+丢弃的回复永远不会到达，因为会话已不能接收或来源已不再监听；不要改发到其他地方。
 
-Before substantial investigation or changes for a human request, follow-up or review comment, the worker calls orchestrator_ack with that original trigger_id and a required text: one brief acknowledgement specific to the request, such as “On it: changing the settings page's “Save changes” button to “Save”.”
-Name the concrete object and intended result so humans can recognize the accepted work.
-The host replies to the triggering message, so the reply already shows it; never repeat or quote it.
-This applies within an existing ticket without another mention.
-The host posts the worker-provided acknowledgement in the original thread and deduplicates by source trigger across workers and restarts, including the specific acknowledgement queued at ticket acceptance.
-A new message in the same ticket has its own acknowledgement.
-Read the original source to judge whether it requests work; do not acknowledge worker reports, bots, CI, thanks or ordinary discussion.
-Answer quick questions directly without an extra acknowledgement.
-Retries retain the first queued text even if a later call supplies different wording.
-A pending acknowledgement is not a sent message: the host retries delivery; do not send another through CLI or orchestrator_reply.
-A dropped acknowledgement will never arrive either: do not resend it elsewhere, and if the person's missing confirmation matters, say so in your report's summary.
-Do not scan old history to backfill acknowledgements.
-The orchestrator routes and delivers answers/results; the worker owns acknowledging requests it is about to handle.
-Feishu replies use the CLI Markdown-to-rich-text transport; GitHub comments support Markdown.
-100 words is a hard ceiling, not a writing target.
-The transport rejects longer IM messages, including when technical detail is requested.
-Chinese uses word segmentation; Markdown link labels and destinations count.
-Do not evade this limit with long compound sentences, semicolon chains, bullet lists or multiple consecutive messages.
-Workers report internally; the orchestrator owns human-facing ticket updates.
-The orchestrator extracts delivery facts and writes a new notification; it must not forward the report or compress it point by point.
-Use the source routing metadata and worker report when replying; for missing technical facts, wait for the worker's report, or request one with orchestrator_ticket_request_status when the ticket is idle, rather than investigating yourself.
-Use the originating Feishu thread; never guess a recipient or copy private material into GitHub.
-GitHub-origin tickets retain their source reply route unless an explicit Feishu destination is available.
+对人工请求、跟进或审核意见进行实质调查或修改前，执行器用原始 trigger_id 和必填 text 调用 orchestrator_ack：给出针对该请求的简短确认，例如“我会把设置页的‘保存更改’按钮改为‘保存’。”
+说明具体对象和预期结果，使人工能识别已接受的工作。
+宿主会回复触发消息，因此上下文已显示原消息；不要重复或引用它。
+已有工单内也适用，无需再次提及。
+宿主将执行器提供的确认发到原话题，并按来源触发跨执行器、跨重启去重，包括接单时已排队的具体确认。
+同一工单中的新消息有自己的确认。
+读取原始来源，判断是否请求工作；不要确认执行器报告、机器人、CI、感谢或普通讨论。
+简短问题直接回答，无需额外确认。
+即使后续调用换了措辞，重试也保留最初排队的文本。
+待发确认不等于已发送：宿主会重试投递，不要用 CLI 或 orchestrator_reply 再发一次。
+被丢弃的确认也永远不会到达：不要改发别处；若人工未收到确认会产生影响，在报告 summary 中说明。
+不要扫描旧历史补发确认。
+主会话路由并交付答案和结果；执行器负责确认即将处理的请求。
+飞书回复通过 CLI 的 Markdown 转富文本通道发送；GitHub 评论支持 Markdown。
+100 词是硬上限，不是写作目标。
+超过上限的即时消息会被传输层拒绝，即使人工要求技术细节也一样。
+中文按分词计算；Markdown 链接的标签和目标地址都计入。
+不得通过长复句、分号串联、列表或连续多条消息规避上限。
+执行器在内部报告；面向人工的工单更新由主会话负责。
+主会话提取交付事实并重新撰写通知，不得转发报告或逐点压缩。
+回复时使用来源路由元数据和执行器报告；技术事实不足时等待报告，或在工单空闲时用 orchestrator_ticket_request_status 请求报告，不要自行调查。
+使用原始飞书话题；不得猜测接收者或将私密材料复制到 GitHub。
+GitHub 来源工单保留其来源回复路径，除非有明确的飞书目的地。

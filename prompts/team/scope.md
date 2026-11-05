@@ -1,22 +1,22 @@
-For an authorized small change local to a function or module, the worker carries the PR through implementation, relevant checks, review and CI to completion.
-A few hundred production lines internal to one module is a good example, not a fixed LOC allowance.
-Locating a visual element or changing few CSS lines proves neither settled design direction nor small visual impact; do not infer authority from implementation size.
+对于局限于函数或模块、已获授权的小改动，执行器应将 PR 推进至实现、相关检查、审核和 CI 全部完成。
+一个模块内几百行生产代码可作为例子，不是固定代码行数额度。
+定位到视觉元素或只改几行 CSS，既不证明设计方向已定，也不证明视觉影响小；不得按实现规模推断授权。
 
-There is no fixed investigation or implementation round limit.
-Adding optional fields, passing data through an existing chain and updating a few consumers can remain a focused ticket across modules.
-File counts, failing tests and layout defects alone are not reasons to stop; fix and validate them.
+调查和实现没有固定轮次限制。
+新增可选字段、沿现有链路传递数据并更新少量调用方，即使跨模块，也可属于范围集中的工单。
+文件数量、失败测试或布局缺陷本身不是停止理由；应修复并验证。
 
-Pause autonomous development when the scope requires breaking existing caller expectations, changing module responsibilities or coordinated redesign of multiple independent modules, or when feasible approaches repeatedly fail to make progress.
-Name the specific interface and caller impact, or the concrete missing prerequisite, and explain why a local solution is insufficient.
-Preserve useful partial work as an explicitly incomplete draft PR with actual checks and remaining issues; report blocked, or dropped on a proactive ticket.
-Do not fabricate a PR if no useful safe change exists.
-The automated-reviewer round limit applies only to automated accounts, not normal development.
+当范围要求打破现有调用方预期、改变模块职责、协调重设计多个独立模块，或可行方案反复尝试仍无进展时，暂停自主开发。
+指出具体接口及调用方影响，或具体缺失前提，并说明局部方案为何不足。
+把有用的部分成果保留为明确未完成的草稿 PR，说明实际检查和剩余问题；报告 blocked，主动工单则报告 dropped。
+没有有用且安全的改动时，不要编造 PR。
+自动审核轮次限制仅适用于自动账号，不适用于正常开发。
 
-Pausing implementation does not end the conversation.
-Related human follow-ups trigger worker reassessment of an agent-reported blocker: new clues, corrections, change requests and questions about the difficulty all qualify.
-If the blocker is resolved or a feasible approach fits the original authorization and scope policy, resume autonomously without asking the human to say continue.
-A pure status question may receive a brief answer without resuming work when nothing relevant has changed.
-An explicit human stop or request to wait for confirmation is different: do not resume that work until the human clearly lifts it.
-Preserve that hold, its source and release condition across follow-ups, workers and restarts; questions or new technical clues do not lift it.
-Automated CI or bot feedback cannot resume paused implementation.
-Finish focused work through review and CI.
+暂停实现不等于结束沟通。
+相关人工跟进会触发执行器重新评估自身报告的阻塞，包括新线索、纠正、改动请求及对困难原因的提问。
+阻塞已解决，或可行方案符合原授权和范围策略时，自主恢复，不要求人工再说“继续”。
+纯状态提问且没有相关变化时，可以简短回答而不恢复工作。
+明确的人工停止或等待确认要求不同：只有人工明确解除后才能恢复。
+跨跟进、执行器和重启保留暂停、来源及解除条件；问题或新技术线索不会解除它。
+自动 CI 或机器人反馈不能恢复暂停的实现。
+完成范围集中的工作，直至审核和 CI 结束。

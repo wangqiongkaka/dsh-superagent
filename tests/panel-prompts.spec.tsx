@@ -47,7 +47,7 @@ it('shows a built-in skill with the CLI notes in the full prompt, editable as a 
   await mount()
   await click(tab(zh.promptViewFull))
   await act(async () => { const select = field<HTMLSelectElement>(zh.promptPreviewTarget); select.value = 'skill/github'; select.dispatchEvent(new Event('change', { bubbles: true })) }); await settle()
-  expect(text()).toContain('## CLI usage')
+  expect(text()).toContain('## CLI 用法')
   expect(all('.dt-preview-part[data-editable] b').map(name => name.textContent)).toEqual([zh['promptPart.skill/github']])
   await click(tab(zh.promptViewEdit))
   for (const name of ['Bad Name', 'github']) {
@@ -143,9 +143,9 @@ it('says which placeholders a template keeps', async () => {
 
 it('marks an override whose built-in text an upgrade changed, shows how it changed, and keeps the team\'s text or takes the new one', async () => {
   const dispatch = builtInParts()['runtime/dispatch']!
-  const overrides = { 'runtime/dispatch': { text: '## dispatch\nOur routing.', base: builtInBase('## dispatch\nThe old routing.') } }
+  const overrides = { 'runtime/dispatch': { text: '## 派工\nOur routing.', base: builtInBase('## 派工\nThe old routing.') } }
   server.prompts.revision = 1; server.prompts.current = promptVersion(1, { ...defaultPrompts(), overrides })
-  server.prompts.defaultChanged = [{ part: 'runtime/dispatch', base: overrides['runtime/dispatch'].base, previous: '## dispatch\nThe old routing.' }]
+  server.prompts.defaultChanged = [{ part: 'runtime/dispatch', base: overrides['runtime/dispatch'].base, previous: '## 派工\nThe old routing.' }]
   at({ page: 'settings', query: { group: 'prompts' } })
   await mount()
   expect(all('.dt-prompt-nav .dt-updated-tag').map(tag => tag.closest('.dt-nav-item')!.querySelector('span')!.firstChild?.textContent))
@@ -156,7 +156,7 @@ it('marks an override whose built-in text an upgrade changed, shows how it chang
   expect(box()!.textContent).toContain('下面是默认内容的变化。')
   expect([...box()!.querySelectorAll('del')].map(line => line.textContent)).toEqual(['The old routing.\n'])
   expect(box()!.querySelectorAll('ins').length).toBeGreaterThan(0)
-  expect(field<HTMLTextAreaElement>(zh.promptBody).value).toBe('## dispatch\nOur routing.')
+  expect(field<HTMLTextAreaElement>(zh.promptBody).value).toBe('## 派工\nOur routing.')
   // Taking the new built-in text drops the override.
   await click(zh.promptTakeDefault)
   expect(field<HTMLTextAreaElement>(zh.promptBody).value).toBe(dispatch.text)
@@ -167,15 +167,15 @@ it('marks an override whose built-in text an upgrade changed, shows how it chang
   await click(zh.promptKeepMine)
   expect(all('.dt-default-updated')).toHaveLength(0)
   await click(zh.save)
-  expect(server.prompts.current.config.overrides).toEqual({ 'runtime/dispatch': { text: '## dispatch\nOur routing.', base: builtInBase(dispatch.text) } })
+  expect(server.prompts.current.config.overrides).toEqual({ 'runtime/dispatch': { text: '## 派工\nOur routing.', base: builtInBase(dispatch.text) } })
 })
 
 it('shows the team\'s text against the new default when the default it was edited from is not known, or is another one', async () => {
   const dispatch = builtInParts()['runtime/dispatch']!
   // The override was restored from an older version: its base is not the one the changed default was found for.
-  const overrides = { 'runtime/dispatch': { text: '## dispatch\nOur routing.', base: 'restored' } }
+  const overrides = { 'runtime/dispatch': { text: '## 派工\nOur routing.', base: 'restored' } }
   server.prompts.revision = 1; server.prompts.current = promptVersion(1, { ...defaultPrompts(), overrides })
-  server.prompts.defaultChanged = [{ part: 'runtime/dispatch', base: 'another', previous: '## dispatch\nThe old routing.' }]
+  server.prompts.defaultChanged = [{ part: 'runtime/dispatch', base: 'another', previous: '## 派工\nThe old routing.' }]
   at({ page: 'settings', query: { group: 'prompts' } })
   await mount()
   await click(builtInItem(zh['promptPart.runtime/dispatch']))
@@ -192,7 +192,7 @@ it('keeps both sides\' first overrides when a draft moves onto a version saved m
   await mount()
   await click(builtInItem(zh['promptPart.runtime/shared']))
   await type(field<HTMLTextAreaElement>(zh.promptBody), 'Shared, ours.')
-  const theirs = { 'runtime/dispatch': { text: '## dispatch\nTheirs.', base: builtInBase(builtInParts()['runtime/dispatch'].text) } }
+  const theirs = { 'runtime/dispatch': { text: '## 派工\nTheirs.', base: builtInBase(builtInParts()['runtime/dispatch'].text) } }
   server.prompts.revision = 1; server.prompts.current = promptVersion(1, { ...defaultPrompts(), overrides: theirs })
   await click(zh.save)
   expect(document.querySelector('.dt-savebar')?.textContent).not.toContain('undefined')
@@ -224,7 +224,7 @@ it('lists the overrides of parts this version no longer has, which the next save
 })
 
 it('loads a version from the history without its overrides of parts this version no longer has, so it saves', async () => {
-  const dispatch = { text: '## dispatch\nOurs.', base: builtInBase(builtInParts()['runtime/dispatch'].text) }
+  const dispatch = { text: '## 派工\nOurs.', base: builtInBase(builtInParts()['runtime/dispatch'].text) }
   at({ page: 'settings', query: { group: 'prompts' } })
   await mount()
   await click(tab(zh.promptViewHistory))

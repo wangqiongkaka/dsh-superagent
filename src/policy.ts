@@ -61,8 +61,8 @@ export function assessmentOutcome(assessment: Assessment, settings: Pick<Setting
     rules: matches.map(match => match.rule_id), audit, ...(name ? { name } : {}), ...(assessment.repositories ? { repositories: assessment.repositories } : {}) }
 }
 const DEFAULT_RULES = [
-  { id: 'copy', name: 'Copy fixes', enabled: true, instruction: 'Explicit requests to correct a typo, wording, punctuation or existing translation. Preserve product promises and business meaning.' },
-  { id: 'visual', name: 'Visual fixes', enabled: true, instruction: 'Explicit implementation requests for local spacing, alignment, overflow or styling, with a specified target or an objectively established existing standard/correct state to restore. Locating an element or calling it inconsistent, unattractive or hard to understand does not establish a target. Do not invent visual style, information hierarchy, rendering or interaction decisions. No redesign, new interaction or behavior. A known spacing defect does not authorize adjacent undefined restyling; assess only a clearly separable authorized scope. If direction or scope is unsettled, observe only: no acknowledgement, worker or unsolicited question.' },
+  { id: 'copy', name: '文案修复', enabled: true, instruction: '明确要求修正错字、措辞、标点或已有翻译。保留产品承诺和业务含义。' },
+  { id: 'visual', name: '视觉修复', enabled: true, instruction: '明确请求实现局部间距、对齐、溢出或样式修复，并提供指定目标，或客观确立的既有标准／待恢复的正确状态。定位到元素，或称其不一致、不好看、难理解，并不能确立目标。不得自行决定视觉风格、信息层级、呈现或交互。不重新设计，不新增交互或行为。已知间距缺陷不授权相邻但未确定的样式重做；仅研判明确可分离且已授权的范围。方向或范围未定时，只观察：不确认、不启动执行器、不主动追问。' },
 ]
 /** An assessment rule; its instruction may also specify PR reviewers and whether to wait for their approval. */
 export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().min(1).max(LIMITS.ruleName), enabled: z.boolean(),

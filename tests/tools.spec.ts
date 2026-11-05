@@ -284,7 +284,7 @@ it('previews a prompt configuration without saving it, and saves one only agains
     const page = await read(preview.previews[1]!.read, { offset, limit: 8000 }) as { text: string; next_offset: number | null }
     text += page.text; offset = page.next_offset
   }
-  expect(text).toContain('## Ticket scope\nFinish what was asked.')
+  expect(text).toContain('## 工单范围\nFinish what was asked.')
   expect(h.runtime.prompts.current().revision).toBe(0)
   await expect(save({ config })).rejects.toThrow('baseRevision')
   expect(await save({ config, baseRevision: 0 })).toMatchObject({ revision: 1 })
