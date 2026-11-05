@@ -16,16 +16,17 @@ export type RuleMatch = z.infer<typeof RuleMatchSchema>
 export const RuleAssessmentSchema = RuleMatchSchema.extend({ matched: z.boolean() }).strict()
 export type RuleAssessment = z.infer<typeof RuleAssessmentSchema>
 export const AdmissionDirectionSchema = z.object({
-  implementation_requested: z.boolean(),
+  implementation_requested: z.boolean().describe('是否明确请求代码改动；只读审核或解释填 false。'),
+  analysis_requested: z.boolean().optional().describe('是否明确请求只读代码审核或解释；缺省为 false，不能据此授权修改代码。'),
   target_basis: z.enum(['specified', 'existing-standard', 'undetermined']),
   requires_design_decision: z.boolean(),
   evidence: z.string().trim().min(1).max(700),
 }).strict()
 export type AdmissionDirection = z.infer<typeof AdmissionDirectionSchema>
-/** Check whether an assessment established implementation intent and a settled target without open design decisions. */
+/** Check whether an assessment established change or read-only analysis intent and a settled target without open design decisions. */
 export function directionAllowed(value: unknown): value is AdmissionDirection {
   const result = AdmissionDirectionSchema.safeParse(value)
-  return result.success && result.data.implementation_requested && result.data.target_basis !== 'undetermined' && !result.data.requires_design_decision
+  return result.success && (result.data.implementation_requested || result.data.analysis_requested === true) && result.data.target_basis !== 'undetermined' && !result.data.requires_design_decision
 }
 export interface Assessment {
   repositories?: string[]

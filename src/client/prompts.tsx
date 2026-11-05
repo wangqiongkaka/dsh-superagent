@@ -8,7 +8,7 @@ import { changedSections, isPart, isSkill, lineDiff, partKey, partText, partWith
 import { useAction, usePanel } from './provider.tsx'
 import { errorText, valueLabel, when, type T } from './text.ts'
 import { Hint, LoadState } from './widgets.tsx'
-import { Button, Icon, Input, SegmentedControl } from './controls.tsx'
+import { Button, Icon, InfoTip, Input, SegmentedControl } from './controls.tsx'
 
 type Tab = 'edit' | 'full' | 'history'
 type Origin = { revision: number } | 'defaults' | { reset: string }
@@ -88,15 +88,20 @@ function PromptSections({ config, view, changed, selected, onSelect, onEdit }: {
   return <div className="dt-prompt">
     <nav className="dt-prompt-nav" aria-label={t('promptSections')}>
       <div className="dt-nav-group">{t('promptTeamGroup')}</div>
-      {view.sections.map(section => item(section, <>
+      {view.sections.map(section => <div key={section} className="dt-prompt-team-item">
+        {item(section, <>
         <span>{sectionLabel(t, view, section)}{config[section] !== view.defaults[section] && <span
-          className="dt-changed-tag">{t('promptChanged')}</span>}{unsaved(section)}</span><small>{t(`promptPartHint.${section}`)}</small>
-      </>))}
-      <div className="dt-nav-group">{t('promptBuiltInGroup')}</div>
-      {view.parts.map(entry => item(`part/${entry.key}`, <span>{sectionLabel(t, view, `part/${entry.key}`)}
+          className="dt-changed-tag">{t('promptChanged')}</span>}{unsaved(section)}</span>
+        </>)}
+        <InfoTip text={t(`promptPartHint.${section}`)} />
+      </div>)}
+      {[false, true].map(skills => <Fragment key={String(skills)}>
+        <div className="dt-nav-group">{t(skills ? 'promptBuiltInSkillsGroup' : 'promptBuiltInGroup')}</div>
+        {view.parts.filter(entry => entry.key.startsWith('skill/') === skills).map(entry => item(`part/${entry.key}`, <span>{sectionLabel(t, view, `part/${entry.key}`)}
         {config.overrides?.[entry.key] && <span className="dt-changed-tag">{t('promptChanged')}</span>}
         {updated(config, entry) && <span className="dt-changed-tag dt-updated-tag">{t('promptDefaultUpdated')}</span>}
         {unsaved(`part/${entry.key}`)}</span>))}
+      </Fragment>)}
       <div className="dt-nav-group">{t('promptSkillsGroup')}</div>
       {Object.keys(config.skills).map(skill => item(`skill/${skill}`, <span>{sectionLabel(t, view, `skill/${skill}`)}{unsaved(
         `skill/${skill}`)}</span>))}

@@ -284,6 +284,19 @@ describe('assessment outcomes', () => {
     current.policy.rules.filter(rule => rule.enabled).map(rule => ({ rule_id: rule.id, matched, reason: 'judged' }))
   const accept = (current: ReturnType<typeof settings>, matched = true) => ({ decision: 'accept' as const, rule_assessments: judged(current, matched),
     direction, title: 'Fix', scope: 'small', reason: 'asked', intent_evidence: 'quote', worktree_name: 'fix-copy' })
+  it('admits requested read-only analysis without implementation, retaining target, evidence and rule gates', () => {
+    const auto = settings('auto')
+    const analysis = { ...accept(auto), direction: { ...direction, implementation_requested: false, analysis_requested: true } }
+    expect(assessmentOutcome(analysis, auto, 'inferred')).toMatchObject({ kind: 'accept', audit: { direction: { analysis_requested: true } } })
+    for (const invalid of [
+      { analysis_requested: false }, { analysis_requested: undefined }, { target_basis: 'undetermined' },
+      { requires_design_decision: true }, { evidence: '' }, { analysis_requested: 'true' },
+    ]) expect(assessmentOutcome({ ...analysis, direction: { ...analysis.direction, ...invalid } }, auto, 'inferred'))
+      .toMatchObject({ kind: 'ignore', reason: { code: 'directionUnsettled' } })
+    expect(assessmentOutcome({ ...analysis, rule_assessments: judged(auto, false) }, auto, 'inferred'))
+      .toMatchObject({ kind: 'ignore', reason: { code: 'noRuleMatched' } })
+    expect(assessmentOutcome(analysis, settings('observe'), 'inferred')).toMatchObject({ kind: 'ignore', audit: { would_accept: true } })
+  })
   it('accepts an inferred candidate on its matched rules in auto mode only, and the Policy admits only enabled matched rules', () => {
     const auto = settings('auto')
     const outcome = assessmentOutcome(accept(auto), auto, 'inferred')

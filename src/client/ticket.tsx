@@ -90,7 +90,7 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
       <Hint>{reasonLabel(t, decision.reason)}</Hint>
       {decision.rules.map(rule => <Hint key={rule.id}>{t(rule.matched ? 'ruleMatched' : 'ruleUnmatched', { rule: rule.name,
         reason: rule.reason })}</Hint>)}
-      {direction && <Hint>{t('directionLine', { intent: t(direction.implementation_requested ? 'intentYes' : 'intentNo'),
+      {direction && <Hint>{t('directionLine', { intent: t(direction.implementation_requested || direction.analysis_requested ? 'intentYes' : 'intentNo'),
         basis: valueLabel(t, 'targetBasis', direction.target_basis),
         design: t(direction.requires_design_decision ? 'designNeeded' : 'designNotNeeded') })} {t('directionEvidence',
           { evidence: direction.evidence })}</Hint>}

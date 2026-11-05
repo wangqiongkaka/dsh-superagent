@@ -186,7 +186,7 @@ const AuditSchema = z.object({
   would_accept: z.boolean().optional().catch(undefined),
   rule_assessments: z.array(z.object({ rule_id: z.string(), matched: z.boolean(), reason: z.string() })).optional().catch(undefined),
   matches: z.array(z.object({ rule_id: z.string(), reason: z.string() })).optional().catch(undefined),
-  direction: z.object({ implementation_requested: z.boolean(), target_basis: z.string(), requires_design_decision: z.boolean(),
+  direction: z.object({ implementation_requested: z.boolean(), analysis_requested: z.boolean().optional(), target_basis: z.string(), requires_design_decision: z.boolean(),
     evidence: z.string() }).optional().catch(undefined),
 }).catch({})
 /** Decision kind, or `wouldAccept` for an ignore decision that observe mode would have accepted. */

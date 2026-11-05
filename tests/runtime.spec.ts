@@ -296,6 +296,31 @@ it('assesses a proactive observation in the orchestrator Session and creates the
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('Proactively accepted under copy') })
 })
 
+it.each(['代码审核', '代码解释'])('accepts %s as read-only analysis and delivers its ready report without a PR', async name => {
+  const policy = runtime.store.settings().policy
+  const rule = { id: 'analysis', name, enabled: true, instruction: '基于实际代码交付只读报告，不修改代码，不创建 PR。' }
+  await runtime.settings.save('policy', { ...policy, rules: [...policy.rules, rule] }, runtime.store.blockRevision('policy'), 'panel')
+  await runtime.settings.save('eval', { ...runtime.store.settings().eval, mode: 'auto' }, runtime.store.blockRevision('eval'), 'panel')
+  const trigger = feishu('21', `请对 src/policy.ts 做${name}，只提供分析`, { mentions: [] })
+  await receive(trigger)
+  vi.spyOn(Commands.prototype, 'lark').mockResolvedValue({ items: [{ message_id: 'om_21', chat_id: CHAT }] })
+  await runTool(runtime.masterId, 'orchestrator_eval', { trigger_id: trigger.id })
+  const accepted = await runTool(runtime.masterId, 'orchestrator_eval_decide', { trigger_id: trigger.id, decision: 'accept',
+    title: name, worktree_name: 'analyze-policy', scope: '只读分析 src/policy.ts', reason: '请求已明确', intent_evidence: trigger.text,
+    rule_assessments: [...policy.rules.map(item => ({ rule_id: item.id, matched: false, reason: '不修改代码' })),
+      { rule_id: rule.id, matched: true, reason: '明确请求只读分析' }],
+    direction: { implementation_requested: false, analysis_requested: true, target_basis: 'specified', requires_design_decision: false,
+      evidence: trigger.text } })
+  expect(accepted).toMatchObject({ decision: 'accept' })
+  const ticket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
+  await runtime.idle()
+  expect(ticket.execution!.assignment).toContain(rule.instruction)
+  expect(sections.get(`worker-${ticket.id}`)!.text({})).toContain('代码审核和代码解释仅交付只读分析，不修改代码')
+  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'ready', summary: '已核实准入路径，分析见报告；未修改代码。' })
+  expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'ready' })
+  await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '代码分析已完成，未修改代码。' })).resolves.toBeDefined()
+})
+
 it('accepts silently under a rule that says so, gives the worker the rule procedure, and closes it as dropped when nothing is left for a human', async () => {
   const policy = runtime.store.settings().policy
   await runtime.settings.save('policy', { ...policy, rules: [...policy.rules, { id: 'silent-bugfix', name: '沉默地复现和修复', enabled: true, instruction: 'Reproduce minimally first; accept silently.' }] }, runtime.store.blockRevision('policy'), 'panel')

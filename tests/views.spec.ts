@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { Store } from '../src/app/store.ts'
+import { said } from '../src/core/index.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
-import { snapshot, threadSummary, ticketSummary, triggerView } from '../src/app/views/records.ts'
+import { snapshot, threadSummary, ticketSummary, triggerView, decisionView } from '../src/app/views/records.ts'
 import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
 import { threadDetail } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
@@ -342,4 +343,15 @@ it('reads each ticket a page\'s follow-ups reached once, and nothing for a messa
   const records = { tickets: { get: vi.fn() }, threads: { get: vi.fn() }, triggers: store.triggers }
   expect(followupOwners(store.triggers.get('f3')!, records)).toEqual([])
   expect([records.tickets.get, records.threads.get].map(read => read.mock.calls.length)).toEqual([0, 0])
+})
+
+it('preserves read-only analysis intent in the decision shown by the panel', () => {
+  const view = snapshot(views())
+  const direction = { implementation_requested: false, analysis_requested: true, target_basis: 'specified', requires_design_decision: false,
+    evidence: '请解释准入流程' }
+  const decision = { id: 'analysis', evalId: 'e', threadKey: 'github:42', triggerIds: [], policyVersion: 'v', at,
+    kind: 'accept' as const, strength: 'inferred' as const, reason: [said('明确问题')], audit: { direction } }
+  expect(decisionView(view, decision).direction).toEqual(direction)
+  const { analysis_requested: _analysis, ...legacy } = direction
+  expect(decisionView(view, { ...decision, audit: { direction: legacy } }).direction).toEqual(legacy)
 })

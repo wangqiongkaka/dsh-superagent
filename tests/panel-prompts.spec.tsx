@@ -11,6 +11,11 @@ usePanel()
 it('lists the team sections, then the built-in parts, edits and saves them separately from settings, and resets one section', async () => {
   at({ page: 'settings', query: { group: 'prompts' } })
   await mount()
+  expect(all('.dt-prompt-nav .dt-nav-group').map(item => item.textContent)).toEqual(['团队约定', '内置提示词', '内置技能', '自定义技能'])
+  const nav = all('.dt-prompt-nav')[0]!
+  const groups = [...nav.children]
+  const skillsHeading = groups.findIndex(item => item.textContent === '内置技能')
+  expect(groups.slice(skillsHeading + 1, skillsHeading + 4).map(item => item.textContent)).toEqual(['飞书技能', 'GitHub 技能', '自定义技能'])
   const names = all('.dt-prompt-nav .dt-nav-item > span').map(item => item.textContent)
   expect(names.slice(0, 3)).toEqual(['沟通方式', '工单范围', '交付要求'])
   expect(names.slice(3)).toEqual(Object.keys(builtInParts()).map(key => zh[`promptPart.${key}` as keyof typeof zh]))
@@ -235,4 +240,19 @@ it('loads a version from the history without its overrides of parts this version
   server.prompts.current = saved
   await click(zh.save)
   expect(server.prompts.current.config.overrides).toEqual({ 'runtime/dispatch': dispatch })
+})
+
+it('shows team descriptions through separate question buttons without changing the selected section', async () => {
+  at({ page: 'settings', query: { group: 'prompts' } })
+  await mount()
+  expect(all('.dt-prompt-nav small')).toHaveLength(0)
+  expect(all('.dt-prompt-team-item > .dt-info')).toHaveLength(3)
+  expect(all('.dt-prompt-nav button button')).toHaveLength(0)
+  const tip = all('.dt-prompt-team-item > .dt-info')[2]!
+  expect(tip.getAttribute('aria-label')).toBe(zh['promptPartHint.delivery'])
+  const selected = document.querySelector('.dt-prompt-nav [aria-current="true"]')
+  await act(async () => { tip.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })) })
+  expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(zh['promptPartHint.delivery'])
+  await click(tip)
+  expect(document.querySelector('.dt-prompt-nav [aria-current="true"]')).toBe(selected)
 })

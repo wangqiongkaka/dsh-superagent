@@ -100,7 +100,7 @@ The accept mode is part of the Policy:
 
 Explicit requests work in every mode. Start in `observe` and switch to `auto` after reviewing the recorded Decisions. Each assessment judges every enabled rule exactly once, whether it matches or not. A proactive accept requires at least one matching rule.
 
-Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions.
+Each rule describes a kind of proactive work. The Ticket's Mandate records the matched rules, and its Executor receives their names and instructions. A settled request may ask for implementation or read-only analysis: `implementation_requested` covers code changes, while optional `analysis_requested` covers code review and explanation (absent means false for older records). Both require a settled target, evidence, and no open decision needed to complete the requested task. Read-only analysis delivers a report without code changes or a PR. Bug fixes and feature iterations remain bounded by the original request and matched rules; rules do not authorize unresolved product, design, or compatibility decisions.
 
 For that Ticket, a rule's process and communication requirements override the defaults. A silence rule can suppress an acknowledgement; a review rule can name the required reviewer and approval before merge. Requirements that apply to every Ticket belong in team prompt sections instead.
 
