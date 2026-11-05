@@ -108,6 +108,13 @@ const TEXT = {
   // Header, search, and tabs
   panel: ['Superagent', 'Superagent'],
   openMaster: ['打开主 Session', 'Open main Session'],
+  rebuildMaster: ['重建主会话', 'Rebuild main Session'],
+  rebuildMasterConfirm: ['主会话空闲时创建并切换到新会话，重新加载当前规则、工单状态和未决定的评估。旧聊天历史不会复制；旧会话和工单记录保留，执行器继续运行。', 'Create and switch to a fresh Session while the main Session is idle, restoring current rules, ticket state and undecided evaluations. Chat history is not copied; the old Session and ticket records remain, and workers keep running.'],
+  masterRebuilt: ['主会话已重建，后续消息将发送到新会话', 'Main Session rebuilt; subsequent messages will reach the new Session'],
+  'userError.masterBusy': ['主会话正在处理消息，请在当前轮次结束后重试', 'The main Session is running; retry after its current turn ends'],
+  'userError.masterRebuilding': ['主会话正在重建，请稍后刷新面板', 'The main Session is already being rebuilt; refresh the panel shortly'],
+  'userError.masterChanged': ['主会话已被替换，请刷新面板并使用当前主会话', 'The main Session has been replaced; refresh the panel and use the current main Session'],
+  'userError.masterSetupPending': ['请先完成部署配置，再重建主会话', 'Complete deployment setup before rebuilding the main Session'],
   pagesLabel: ['dsh-superagent 页面', 'dsh-superagent pages'],
   searchPlaceholder: ['搜索工单、线程、触发或链接', 'Search Tickets, Threads, Triggers or links'],
   searchLabel: ['搜索', 'Search'],

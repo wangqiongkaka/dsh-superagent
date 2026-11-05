@@ -7,6 +7,32 @@ import { usePanel, mount, remount, settle, all, click, type, text, field } from 
 import { server, found } from './fixtures/panel-server.ts'
 
 usePanel()
+it('rebuilds the main Session after confirmation and opens the replacement', async () => {
+  await mount()
+  await click(zh.rebuildMaster)
+  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(zh.rebuildMasterConfirm)
+  await click(zh.cancel)
+  expect(server.requests.some(request => request.path === 'master/rebuild')).toBe(false)
+  await click(zh.rebuildMaster)
+  await click(zh.confirm)
+  expect(server.requests.find(request => request.path === 'master/rebuild')).toMatchObject({ method: 'POST', body: { masterId: 'master' } })
+  expect(text()).toContain(zh.masterRebuilt)
+  await click(zh.openMaster)
+  expect(server.opened).toEqual(['master-rebuilt'])
+})
+
+it('keeps the old main Session when rebuilding is refused during its turn', async () => {
+  server.rebuildError = 'Main Session is busy'
+  await mount()
+  await click(zh.rebuildMaster)
+  await click(zh.confirm)
+  expect(text()).toContain(zh['userError.masterBusy'])
+  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
+  await click(zh.cancel)
+  await click(zh.openMaster)
+  expect(server.opened).toEqual(['master'])
+})
+
 it('states why a filtered search result has no Thread instead of opening an empty one', async () => {
   server.search = { items: [found('e9', '2026-09-20T00:00:00Z', { source: 'github', actor: { source: 'github', id: 'someone' },
     preview: 'issue text', threads: ['github:7'],

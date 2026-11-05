@@ -1,5 +1,9 @@
 /** User-facing error codes mapped to their category ('missing' or 'refused') and English message template. */
 export const USER_ERRORS = {
+  masterBusy: ['refused', 'The main Session is running; retry after its current turn ends'],
+  masterRebuilding: ['refused', 'The main Session is already being rebuilt'],
+  masterChanged: ['refused', 'The main Session has been replaced; refresh the panel and use the current main Session'],
+  masterSetupPending: ['refused', 'Complete deployment setup before rebuilding the main Session'],
   unknownTicket: ['missing', 'Unknown ticket'],
   unknownProblem: ['missing', 'Unavailable Eval not found'],
   unknownTrigger: ['missing', 'Unknown trigger'],

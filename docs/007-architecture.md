@@ -32,6 +32,8 @@ flowchart TB
 
 Startup registers management routes and runs Setup. After setup resolves, it installs Session and Executor hooks, ensures the main Session exists, starts Policy syncs, resumes interrupted Assignments, and starts passes and effects. `ready` marks completion of startup.
 
+`POST master/rebuild` 接收面板所见的 `masterId`，拒绝运行中、并发或过期的重建请求。重建期间暂缓主会话消息投递和评估计时，等待已有投递完成，再准备新会话。准备成功后持久化并切换主会话 ID，投递恢复摘要，并重新投递未决定评估；这些评估保留 ID，投递到新会话后重新计时。会话、资源读取和 HTTP 视图动态读取当前主会话 ID，旧会话的工具和模型步骤拒绝继续派工。执行器不重启，已有决定、回复和工单记录保留。
+
 Shutdown cancels turns, waits for passes, effects and agents, restores the process environment, closes the Store and releases the lock. Source plugins inject Runtime as the `orchestrator` service through the narrow `SourceHost` interface.
 
 | Part | Module | Does |
@@ -436,6 +438,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/external-workers.spec.ts` | Codex and Claude Code worker selection, the native main Session, scoped reports, missing-provider failure and panel-only selection |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
+| `tests/master-rebuild.spec.ts` | 主会话重建、评估恢复、运行中拒绝、创建失败回退、并发投递和旧会话派工拦截 |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the status of each kind of failure, the body limit, path parameters and queries |

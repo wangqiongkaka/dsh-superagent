@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
@@ -24,6 +24,17 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
 }
+
+it('validates a main Session rebuild request before passing the expected Session ID to the runtime', async () => {
+  const rebuildMaster = vi.fn(async () => ({ masterId: 'new-main' }))
+  const call = serve({ rebuildMaster })
+  for (const body of [{}, { masterId: '' }, { masterId: 'old-main', extra: true }]) {
+    expect(await call('POST', 'master/rebuild', body)).toMatchObject({ status: 400 })
+  }
+  expect(rebuildMaster).not.toHaveBeenCalled()
+  expect(await call('POST', 'master/rebuild', { masterId: 'old-main' })).toEqual({ status: 200, body: { masterId: 'new-main' } })
+  expect(rebuildMaster).toHaveBeenCalledExactlyOnceWith('old-main')
+})
 
 it('answers each kind of failure with its own status', async () => {
   const saves: unknown[] = []

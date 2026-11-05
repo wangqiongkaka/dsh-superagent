@@ -13,7 +13,8 @@ import { configurableHarness, HarnessCatalogSchema, harnessOf } from './harness.
 import type { ExternalHarness, HarnessSelection } from '../policy.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
-import type { Effects } from './effects.ts'
+import { Later, type Effects } from './effects.ts'
+import { UserError } from '../core/errors.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
 import { initializeRoleModel } from './role-models.ts'
@@ -37,6 +38,7 @@ export interface SessionsHost {
   readonly masterId: string
   readonly lifetime: AbortSignal
   closing(): boolean
+  rebuilding(): boolean
   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
   environment(ticket: Ticket): Variable[]
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
@@ -47,7 +49,7 @@ export interface SessionsHost {
  * What Sessions registered for an agent it decorated: the releases of its prompt section, tools and skill scope, the scope
  * its skills are registered in, and the skills of one prompt revision; for a worker's subagent, only its tool limits.
  */
-interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true }
+interface SessionBinding { disposers: (() => void)[]; scope?: Context; skills?: { revision: number; dispose: () => void }; subagent?: true; master?: boolean }
 
 /** The agent presets Executor Sessions and the main Session are created with, which the bundle's patch defines. */
 export const WORKER_PRESET = 'dsh-superagent-worker', ROUTER_PRESET = 'dsh-superagent-router'
@@ -115,12 +117,13 @@ export class Sessions {
     this.ctx = host.context
     this.agentDelivery = new AgentDelivery(host.context)
     // Deliver relays and notices to the main Session in the order they were queued.
-    host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true })
-    host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true })
+    host.effects.handle('relay', ({ text }, requestId) => this.prompt(host.masterId, requestId, text, 'steer'), { ordered: true, limit: () => host.rebuilding() ? 0 : 1 })
+    host.effects.handle('notice', ({ value, summary }, name) => this.inject(name, value, summary), { ordered: true, limit: () => host.rebuilding() ? 0 : 1 })
   }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
     const guardEnded = (scope: Context) => scope.on('agent/pre-step', (payload, next) => {
+      if (this.bindings.get(payload.agent)?.master && payload.agent.id !== this.host.masterId) throw new UserError('masterChanged')
       const ticket = this.ticketOf(payload.agent)
       if (ticket?.ended) throw new Error('该工单已结束，原会话仅供查看。请回到来源话题发送后续请求，由工单流程确认是否继续执行。')
       return next()
@@ -185,7 +188,7 @@ export class Sessions {
     }
     const harness = ticket?.execution?.harness ?? 'dsh'
     if (harness === 'dsh') await initializeRoleModel(ctx, result.agent, role === 'orchestrator' ? settings.eval.model : settings.executor.model)
-    await this.decorate(result.agent)
+    await this.decorate(result.agent, role === 'orchestrator')
     ctx.permissionPresets.set(result.agent.session, 'danger-full-access')
     const bridge = harnessOf(ctx)
     if (harness !== 'dsh' && typeof bridge?.manageSession !== 'function') throw new Error('External workers require dsh-harness-provider with managed-session support in this Profile')
@@ -232,6 +235,7 @@ export class Sessions {
   /** Deliver a message once per request id: to the next turn, the current one, or `inject`ed with its label without waking the agent. */
   async prompt(sessionId: string, requestId: string, text: string, mode: 'queue' | 'steer' | { inject: string }, authorize?: () => void,
     accepted?: () => void): Promise<void> {
+    if (sessionId === this.host.masterId && this.host.rebuilding()) throw new Later('Main Session is being rebuilt')
     const bridge = harnessOf(this.ctx)
     if (sessionId === this.host.masterId && typeof bridge?.manageSession === 'function') {
       await bridge.manageSession(sessionId, { owner: 'dsh-superagent', harness: 'dsh' })
@@ -286,7 +290,10 @@ export class Sessions {
           const image = value && typeof value === 'object' && 'image' in value ? (value as { image: never }).image : undefined
           return image ? [text, { type: 'image' as const, attachment: image }] : [text]
         } },
-        execute: (args, execution) => execute(schema.parse(args), execution.signal) }))
+        execute: (args, execution) => {
+          if (binding.master && agent.id !== this.host.masterId) throw new UserError('masterChanged')
+          return execute(schema.parse(args), execution.signal)
+        } }))
     }
   }
   /** Returns `sessionId`'s active model-budget retry state (`{ model_retry }`) for status listings, or `{}` when not waiting on one. */
@@ -304,13 +311,12 @@ export class Sessions {
     const ticketId = ticketOfSession(agent.id)
     return ticketId === undefined ? undefined : this.host.store.tickets.get(ticketId)
   }
-  private async decorate(agent: Agent): Promise<void> {
+  private async decorate(agent: Agent, master = agent.id === this.host.masterId): Promise<void> {
     if (this.bindings.has(agent)) return
     const host = this.host
-    const master = agent.id === host.masterId
     const ticket = master ? undefined : this.ticketOf(agent)
     if (!master && !ticket) { this.limitSubagent(agent); return }
-    const binding: SessionBinding = { disposers: [] }
+    const binding: SessionBinding = { disposers: [], master }
     this.bindings.set(agent, binding)
     this.retryHealth.restore(agent.id, agent.session.snapshotEvents())
     if (agent.status === 'idle') this.retryHealth.clear(agent.id)
@@ -411,7 +417,7 @@ export class Sessions {
   }
   private instructions(agent: Agent, record: boolean): string {
     const version = this.promptFor(agent, record), ticket = this.ticketOf(agent)
-    const role = agent.id === this.host.masterId ? 'orchestrator' : 'worker'
+    const role = this.bindings.get(agent)?.master ? 'orchestrator' : 'worker'
     return `[dsh-superagent prompt revision ${version.revision}]\n${this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? mandateInstructions(ticket.mandate) : ''}`
   }
   /** Ends a native worker process once its own final report has returned, or immediately for a cancellation. */

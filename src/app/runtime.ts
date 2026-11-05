@@ -11,9 +11,10 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-skill'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import { mkdirSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { lockSync } from 'proper-lockfile'
-import { Engine, key, reasonText, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
+import { Engine, key, reasonText, UserError, type EngineForSettings, type ReceiveResult, type Ticket, type Trigger } from '../core/index.ts'
 import { allowedSender, settingsPolicy } from '../policy.ts'
 import { SourceRegistry } from '../sources/registry.ts'
 import { Commands } from '../infra/commands.ts'
@@ -73,7 +74,9 @@ export class Runtime extends Service implements SourceHost {
   readonly ready: Promise<void>
   private readonly board = new HealthBoard()
   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
-  readonly masterId: string
+  private mainSessionId: string
+  get masterId(): string { return this.mainSessionId }
+  private rebuilding?: Promise<{ masterId: string }>
   private readonly sourceLinks = new TextCache(200_000)
   private readonly stopped = new AbortController()
   private readonly disposers: (() => void)[] = []
@@ -101,7 +104,7 @@ export class Runtime extends Service implements SourceHost {
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
       const feishu = () => setup.configured() && !!setup.deployment.feishu
       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
-      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
+      const masterId = this.mainSessionId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
       store.set(KV.runtime.masterId, masterId)
       const commands = this.commands = new Commands(() => setup.deployment, setup.commandEnvironment, this.lifetime)
       const board = this.board
@@ -115,12 +118,12 @@ export class Runtime extends Service implements SourceHost {
       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
-      const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
+      const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, get masterId() { return runtime.masterId }, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
-      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
+      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), get masterId() { return runtime.masterId },
         lifetime: this.lifetime,
-        closing: () => this.closing(), environment,
+        closing: () => this.closing(), rebuilding: () => !!this.rebuilding, environment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
@@ -129,8 +132,8 @@ export class Runtime extends Service implements SourceHost {
         lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
-        settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
-        deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
+        settings: () => store.settings(), paused: () => this.paused() || !!this.rebuilding, threadContext: trigger => sources.threadContext(trigger),
+        deliver: (id, text) => sessions.prompt(this.masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
       const { assessor, executor } = this
       const policy = () => settingsPolicy(store.settings(), sources)
@@ -153,7 +156,7 @@ export class Runtime extends Service implements SourceHost {
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
       const evals = board.claim('evals', { state: 'ready', detail: 'No unavailable Eval in the last hour' })
-      const evaluateDue = () => { engine.evaluateDue(); evals.set(evalsHealth(store)) }
+      const evaluateDue = () => { if (!this.rebuilding) engine.evaluateDue(); evals.set(evalsHealth(store)) }
       const passes = this.passes = new Passes({ engine: { receive: trigger => engine.receive(trigger), evaluateDue }, effects,
         health: this.runtimeHealth, lifetime: this.lifetime, configured: () => setup.configured(), closing: () => this.closing() })
       this.sourceDeps = { store, engine, outbox, commands, sources, get ready() { return runtime.ready },
@@ -195,6 +198,53 @@ export class Runtime extends Service implements SourceHost {
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }
   sendReplies(): Promise<void> { return this.outbox.sent() }
+  /** Replace an idle main Session, retaining domain state and replaying only active evaluations. */
+  rebuildMaster(expectedId: string): Promise<{ masterId: string }> {
+    if (this.rebuilding) return Promise.reject(new UserError('masterRebuilding'))
+    return this.rebuilding = this.replaceMaster(expectedId).finally(() => {
+      this.rebuilding = undefined
+      if (!this.closing()) { this.effects.kick(); this.passes.request() }
+    })
+  }
+  private async replaceMaster(expectedId: string): Promise<{ masterId: string }> {
+    await this.ready
+    this.lifetime.throwIfAborted()
+    if (!this.configured()) throw new UserError('masterSetupPending')
+    if (expectedId !== this.masterId) throw new UserError('masterChanged')
+    const previous = this.masterId
+    const idle = () => { if (this.ctx.agents.get(previous as SessionId)?.status === 'running') throw new UserError('masterBusy') }
+    idle()
+    this.store.atomic(() => {
+      for (const thread of this.store.threads.active()) if (thread.evaluating?.delivered && !thread.evaluating.pausedAt) {
+        thread.evaluating.pausedAt = now()
+        this.store.threads.save(thread)
+      }
+    })
+    // Drain deliveries already targeting the old Session before preparing its replacement.
+    await Promise.all((['assessment', 'relay', 'notice'] as const).map(kind => this.effects.idle(kind)))
+    idle()
+    const id = `orchestrator-${randomUUID()}`
+    await this.sessions.ensure(id, this.machine.stateDir, 'dsh-superagent orchestrator', 'orchestrator')
+    this.lifetime.throwIfAborted()
+    idle()
+    this.store.atomic(() => {
+      this.store.set(KV.runtime.masterId, id)
+      const tickets = this.store.tickets.list()
+      this.sessions.relay(`rebuild:${id}`, JSON.stringify({ kind: 'orchestrator_rebuilt', previous_session: previous,
+        tickets: { items: tickets.slice(0, 20).map(ticketCard), ...tickets.length > 20 ? { next_resource: 'tickets', next_offset: 20 } : {} },
+        instruction: 'This is a fresh main Session with the current policy and tools. Read the ticket cards and further pages with orchestrator_read; inspect current reports and reply status before acting. Continue only persisted outstanding work. Do not repeat sent acknowledgements or results, create replacement tickets, or restart workers. Active candidates are delivered separately; historical unavailable evaluations require a manual requeue.' }))
+      for (const thread of this.store.threads.active()) {
+        if (!thread.evaluating) continue
+        delete thread.evaluating.delivered; delete thread.evaluating.pausedAt; delete thread.expired
+        this.store.threads.save(thread)
+        this.assessor.release(thread.evaluating.id)
+        const candidate = this.engine.candidate(thread.evaluating.triggerIds[0]!)
+        if (candidate) this.assessor.request(candidate)
+      }
+    })
+    this.mainSessionId = id
+    return { masterId: id }
+  }
   private closing(): boolean { return this.closingFlag }
   /** Hold evaluation, dispatch, and outbound delivery while paused or awaiting setup; sources still record incoming triggers. */
   private paused(): boolean { return !this.setup.configured() || this.store.settings().paused }
@@ -224,18 +274,20 @@ export class Runtime extends Service implements SourceHost {
   }
   private httpHost(): HttpHost {
     const runtime = this
-    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
-    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
+    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, ready, sourceLinks, setup, passes } = this
+    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, get masterId() { return runtime.masterId }, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
-      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog() }
+      checkSetup: () => { setup.check() }, requestPass: () => { passes.request() }, models: () => this.ctx.sessionController.modelCatalog(),
+      rebuildMaster: id => this.rebuildMaster(id) }
   }
   /** Idempotent stop; concurrent or repeated calls share the same shutdown promise. */
   stop(): Promise<void> { return this.stopping ??= this.shutdown() }
   private async shutdown(): Promise<void> {
     this.closingFlag = true; const passes = this.passes.stop(); this.stopped.abort()
     try {
+      await this.rebuilding?.catch(() => {})
       this.assessor.stop()
       const ids = [this.masterId, ...this.store.tickets.list().map(ticket => workerSessionId(ticket.id))]
       const agents = ids.map(id => this.ctx.agents.get(id as SessionId)).filter((agent): agent is Agent => agent !== undefined)

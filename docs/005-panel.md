@@ -12,6 +12,8 @@ Opening the panel answers three questions, in this order:
 
 ## Tabs
 
+面板顶部提供“重建主会话”。确认后，仅在主会话空闲时创建全新主会话，并恢复当前规则、工单摘要与未决定的评估；运行中会提示当前轮次结束后重试。旧会话及工单记录保留，旧会话不能继续派工，执行器继续运行。旧聊天历史不复制，此前已超时的评估仍需手动“重新评估”。重建失败时继续使用原主会话。
+
 The tabs follow the workflow: **Overview**, **Source**, **Trigger**, **Eval**, **Execution**, and **Settings**. Until repository and account setup succeeds, Overview shows what is missing and links to the relevant setting.
 
 | Tab | Shows |
