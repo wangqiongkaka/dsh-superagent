@@ -138,7 +138,12 @@ export function threadFacts(store: Store, thread: Thread) {
   return { key: thread.key, source: thread.ref.source, title: threadTitle(store, thread), ...url ? { url } : {}, facts: (thread.meta.facts ?? {}) as ThreadFacts }
 }
 export type ThreadFactsView = ReturnType<typeof threadFacts>
-export const ticketLine = (view: Snapshot, ticket: Ticket) => ({ ...ticketSummary(ticket),
+const worktreeCleanup = (ticket: Ticket) => {
+  const repositories = ticket.execution?.repositories?.filter(repo => repo.worktree) ?? []
+  const cleaned = repositories.flatMap(repo => repo.worktree?.cleanedAt ? [{ id: repo.id, at: repo.worktree.cleanedAt }] : [])
+  return cleaned.length ? { worktreeCleanup: { total: repositories.length, cleaned } } : {}
+}
+export const ticketLine = (view: Snapshot, ticket: Ticket) => ({ ...ticketSummary(ticket), ...worktreeCleanup(ticket),
   threads: view.threadsOf(ticket.id).map(thread => threadFacts(view.store, thread)) })
 export function threadTitle(store: Pick<Store, 'read'>, thread: Thread): string {
   const label = attribute(thread.meta.label)

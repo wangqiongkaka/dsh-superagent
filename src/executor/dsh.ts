@@ -459,6 +459,10 @@ export class DshExecutor implements Executor {
           await assertIdle()
           const workspace = this.host.context.workspaceRegistry.list().find(item => item.path === directory)
           if (workspace) await this.host.context.workspaceRegistry.delete(workspace.id)
+          const stored = this.host.store.tickets.get(id)!
+          this.host.store.tickets.save({ ...stored, execution: { ...stored.execution!,
+            repositories: stored.execution!.repositories!.map(item => item.id === repo.id
+              ? { ...item, worktree: { ...item.worktree!, cleanedAt: now() } } : item) } })
           results.push({ repository: repo.id, removed: true })
         } catch (error) { results.push({ repository: repo.id, removed: false, reason: String(error), ...(error instanceof IgnoredWorktreeFiles ? { ignored: { paths: error.paths, token: error.token } } : {}) }) }
       }
@@ -506,7 +510,12 @@ export class DshExecutor implements Executor {
       if (!current()) return
       if (ticket.execution?.repositories) {
         const stored = this.host.store.tickets.get(ticket.id)!
-        this.host.store.tickets.save({ ...stored, execution: { ...stored.execution!, prepared: true } })
+        this.host.store.tickets.save({ ...stored, execution: { ...stored.execution!, prepared: true,
+          repositories: stored.execution!.repositories?.map(repo => {
+            if (!repo.worktree?.cleanedAt) return repo
+            const { cleanedAt: _cleanedAt, ...worktree } = repo.worktree
+            return { ...repo, worktree }
+          }) } })
       }
     }
     if (!current()) return

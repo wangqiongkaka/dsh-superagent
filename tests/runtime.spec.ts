@@ -1861,7 +1861,11 @@ it('removes only the cleaned workspace registration and permits retry after regi
   expect(await runtime.executor.cleanupWorktrees(ticket.id)).toEqual([
     { repository: 'service', removed: false, reason: 'Error: registry unavailable' },
   ])
+  expect(ticketDetail(viewsOf(runtime), ticket.id)?.worktreeCleanup).toBeUndefined()
   expect(await runtime.executor.cleanupWorktrees(ticket.id)).toEqual([{ repository: 'service', removed: true }])
+  expect(runtime.store.tickets.get(ticket.id)!.execution!.repositories![0]!.worktree!.cleanedAt).toEqual(expect.any(String))
+  expect(ticketDetail(viewsOf(runtime), ticket.id)).toMatchObject({ canCleanupWorktrees: false,
+    worktreeCleanup: { total: 1, cleaned: [{ id: 'service', at: expect.any(String) }] } })
   expect(deleteWorkspace.mock.calls).toEqual([['task'], ['task']])
   remove.mockRejectedValueOnce(new Error('dirty'))
   expect((await runtime.executor.cleanupWorktrees(ticket.id))[0]!.removed).toBe(false)

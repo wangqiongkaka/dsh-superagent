@@ -312,7 +312,7 @@ export interface Ticket {
  * Thread closed; the ticket then ends unless its work has not finished (see `Tickets.unfinished`).
  */
 export interface Follow { thread: string; own: boolean; closed?: { at: string; outcome: 'merged' | 'closed' } }
-export interface Execution { name: string; directory: string; assignment: string; harness?: 'dsh' | 'codex' | 'claude-code'; repositories?: { id: string; provider: 'github' | 'gitlab'; url: string; cli: string; worktree?: { base: string; directory: string; initialize?: boolean } }[]; prepared?: boolean; primaryRepository?: string; projectsLinked?: boolean }
+export interface Execution { name: string; directory: string; assignment: string; harness?: 'dsh' | 'codex' | 'claude-code'; repositories?: { id: string; provider: 'github' | 'gitlab'; url: string; cli: string; worktree?: { base: string; directory: string; initialize?: boolean; cleanedAt?: string } }[]; prepared?: boolean; primaryRepository?: string; projectsLinked?: boolean }
 
 /** Whether a ticket is open: it has not ended. */
 export const liveTicket = (ticket: Pick<Ticket, 'ended'>): boolean => !ticket.ended

@@ -6,6 +6,8 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  worktreeCleaned: ['worktree 已清理', 'Worktrees cleaned'],
+  worktreePartlyCleaned: ['worktree 已清理 {cleaned}/{total}', 'Worktrees cleaned {cleaned}/{total}'],
   executionStatus: ['执行状态', 'Execution status'],
   openExecutionStatus: ['查看此会话对应的工单执行状态', 'View the execution status of this session’s ticket'],
   cleanupIgnored: ['连同忽略文件清理', 'Remove including ignored files'],

@@ -294,3 +294,22 @@ it('shows ignored files and requires a second confirmation scoped to their repos
   })
   expect(text()).toContain(zh.worktreeRemoved)
 })
+
+
+it('shows persisted cleanup after reopening the ticket and hides the cleanup button', async () => {
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, canCleanupWorktrees: false,
+    worktreeCleanup: { total: 1, cleaned: [{ id: 'example', at: '2026-09-20T00:00:00Z' }] } }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  expect(text()).toContain(zh.worktreeCleaned)
+  expect([...document.querySelectorAll('button')].some(button => button.textContent === zh.cleanupWorktrees)).toBe(false)
+})
+
+it('keeps cleanup available and shows progress for partially cleaned worktrees', async () => {
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, canCleanupWorktrees: true,
+    worktreeCleanup: { total: 2, cleaned: [{ id: 'example', at: '2026-09-20T00:00:00Z' }] } }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  expect(text()).toContain('worktree 已清理 1/2')
+  expect([...document.querySelectorAll('button')].some(button => button.textContent === zh.cleanupWorktrees)).toBe(true)
+})

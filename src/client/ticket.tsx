@@ -191,6 +191,11 @@ export function TicketPage({ id }: { id: string }) {
             className="dt-mono dt-clamp">{data.mandate.scope}</span>] as [string, ReactNode]] : []]} />
       </Details>
     </div>
+    {data.worktreeCleanup && <div className="dt-danger-zone">
+      <Tag tone="quiet">{data.worktreeCleanup.cleaned.length === data.worktreeCleanup.total ? t('worktreeCleaned')
+        : t('worktreePartlyCleaned', { cleaned: data.worktreeCleanup.cleaned.length, total: data.worktreeCleanup.total })}</Tag>
+      {data.worktreeCleanup.cleaned.map(repo => <p className="dt-hint" key={repo.id}>{repo.id} · <When at={repo.at} /></p>)}
+    </div>}
     {data.canCleanupWorktrees && <div className="dt-danger-zone">
       <ConfirmButton variant="outline" label={t('cleanupWorktrees')} title={t('cleanupWorktrees')}
         message={t('cleanupWorktreesConfirm')} onConfirm={async () => {

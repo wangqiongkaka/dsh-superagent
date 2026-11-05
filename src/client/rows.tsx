@@ -22,6 +22,8 @@ export function TicketLine({ ticket, question, onChanged, context }: {
         id: ticket.id })}>{ticket.title}</button></div>
       <div className="dt-row-meta dt-ticket-meta">
         {ticket.threads.map(thread => <ThreadChip key={thread.key} thread={thread} />)}
+        {ticket.worktreeCleanup && <Tag tone="quiet">{ticket.worktreeCleanup.cleaned.length === ticket.worktreeCleanup.total
+          ? t('worktreeCleaned') : t('worktreePartlyCleaned', { cleaned: ticket.worktreeCleanup.cleaned.length, total: ticket.worktreeCleanup.total })}</Tag>}
         {context && <ContextTag />}
         {ticket.undelivered > 0 && <LabelValue label={t('ticketUndeliveredLabel')} value={ticket.undelivered} />}
         {note ? <span className={note.error ? 'dt-ticket-note dt-ticket-note-error' : 'dt-ticket-note'} title={note.text}>{note.text}</span>
