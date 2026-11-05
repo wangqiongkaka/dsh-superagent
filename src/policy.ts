@@ -70,6 +70,11 @@ export const RuleSchema = z.object({ id: RuleIdSchema, name: z.string().trim().m
 export type Rule = z.infer<typeof RuleSchema>
 export const RoleModelSchema = z.object({ provider: z.string().trim().min(1), model: z.string().trim().min(1), reasoningEffort: z.string().trim().min(1).optional() }).strict()
 export type RoleModel = z.infer<typeof RoleModelSchema>
+export const ExternalHarnessSchema = z.enum(['codex', 'claude-code'])
+export type ExternalHarness = z.infer<typeof ExternalHarnessSchema>
+export const HarnessSelectionSchema = z.object({ model: z.string().trim().min(1).max(200).optional(),
+  thinking: z.string().trim().min(1).max(100).optional(), fast: z.boolean().optional() }).strict()
+export type HarnessSelection = z.infer<typeof HarnessSelectionSchema>
 
 export const AllowedSchema = z.object({ id: z.string().trim().min(1).max(200), name: z.string().trim().max(100).optional() }).strict()
 const Weak = z.enum(['inferred', 'ignore'])
@@ -91,6 +96,7 @@ const CommandNameSchema = z.string().regex(/^[A-Za-z0-9._-]+$/).refine(name => n
 /** Executor settings: worker model, concurrency, ticket directory root (empty defaults to `<stateDir>/work`), `prepare` command, and blocked commands. */
 export const ExecutorConfigSchema = z.object({
   harness: z.enum(['dsh', 'codex', 'claude-code']).default('dsh'),
+  harnessModels: z.partialRecord(ExternalHarnessSchema, HarnessSelectionSchema).optional(),
   model: RoleModelSchema.nullable().default(null),
   maxWorkers: z.number().int().min(LIMITS.maxWorkers.min).max(LIMITS.maxWorkers.max).default(3),
   directory: z.string().trim().refine(path => path === '' || path.startsWith('/'), 'An absolute path, or empty for <stateDir>/work').default(''),

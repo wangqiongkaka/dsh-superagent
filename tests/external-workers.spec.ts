@@ -7,6 +7,37 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 let h: Host | undefined
 afterEach(async () => { await h?.stop(); h = undefined })
 
+it.each(['codex', 'claude-code'] as const)('passes the %s selection to managed workers and validates settings before saving', async harness => {
+  h = await startRuntime()
+  const bridge = { managedSessionOptionsVersion: 1, models: vi.fn(), validateManagedSessionSelection: vi.fn(async () => {}),
+    manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  const settings = h.runtime.store.settings()
+  const selection = { model: 'deep', thinking: 'high', fast: false }
+  await h.runtime.settings.save('executor', { ...settings.executor, harness, harnessModels: { [harness]: selection } },
+    h.runtime.store.blockRevision('executor'), 'panel')
+  expect(bridge.validateManagedSessionSelection).toHaveBeenCalledWith(h.runtime.masterId, harness, selection)
+  const { sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  expect(bridge.manageSession).toHaveBeenCalledWith(sessionId, expect.objectContaining({ harness, selection }))
+  const saved = h.runtime.store.settings().executor
+  bridge.validateManagedSessionSelection.mockRejectedValueOnce(new Error('模型不支持此推理强度'))
+  await expect(h.runtime.settings.save('executor', { ...saved, harnessModels: { [harness]: { model: 'small', thinking: 'high' } } },
+    h.runtime.store.blockRevision('executor'), 'panel')).rejects.toThrow('模型不支持此推理强度')
+  expect(h.runtime.store.settings().executor).toEqual(saved)
+})
+
+it('rejects explicit choices with an old Provider instead of silently ignoring them', async () => {
+  h = await startRuntime()
+  const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  const executor = { ...h.runtime.store.settings().executor, harness: 'codex' as const, harnessModels: { codex: { fast: true } } }
+  await expect(h.runtime.settings.save('executor', executor, h.runtime.store.blockRevision('executor'), 'panel')).rejects.toThrow('升级')
+  h.runtime.store.saveSettings({ ...h.runtime.store.settings(), executor })
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  expect(h.runtime.store.tickets.get(ticket.id)?.assignments.at(-1)?.report).toMatchObject({ state: 'failed', summary: expect.stringContaining('升级') })
+  expect(bridge.manageSession).not.toHaveBeenCalledWith(sessionId, expect.anything())
+})
+
 it.each(['codex', 'claude-code'] as const)('links only secondary worktrees for %s and persists the successful setup', async harness => {
   h = await startRuntime()
   const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}), linkProjects: vi.fn(async () => {}) }

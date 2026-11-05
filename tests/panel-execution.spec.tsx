@@ -7,6 +7,33 @@ import { usePanel, mount, remount, all, find, tab, click, type, text, field, at 
 import { MEMBER, server, ticketSummary, threadSummary } from './fixtures/panel-server.ts'
 
 usePanel()
+it('keeps per-Harness model, effort and fast choices through switching and reload, and clears incompatible effort', async () => {
+  at({ page: 'settings', query: { group: 'execution' } })
+  await mount()
+  const select = (label: string, value: string) => type(field<HTMLSelectElement>(label), value)
+  await click('Codex')
+  await select(zh.modelName, 'codex-deep')
+  await select(zh.modelEffort, 'high')
+  await select(zh.harnessFast, 'true')
+  await click('Claude Code')
+  expect(field<HTMLSelectElement>(zh.modelName).value).toBe('')
+  await select(zh.modelName, 'claude-code-small')
+  expect([...field<HTMLSelectElement>(zh.modelEffort).options].map(option => option.value)).toEqual(['', 'low'])
+  await select(zh.harnessFast, 'false')
+  await click('Codex')
+  expect(field<HTMLSelectElement>(zh.modelEffort).value).toBe('high')
+  expect(field<HTMLSelectElement>(zh.harnessFast).value).toBe('true')
+  await select(zh.modelName, 'codex-small')
+  expect(field<HTMLSelectElement>(zh.modelEffort).value).toBe('')
+  await select(zh.modelEffort, 'low')
+  await click(zh.save)
+  expect(server.settings.executor.harnessModels).toEqual({ codex: { model: 'codex-small', thinking: 'low', fast: true },
+    'claude-code': { model: 'claude-code-small', fast: false } })
+  await remount()
+  expect(field<HTMLSelectElement>(zh.modelName).value).toBe('codex-small')
+  expect(field<HTMLSelectElement>(zh.modelEffort).value).toBe('low')
+  expect(field<HTMLSelectElement>(zh.harnessFast).value).toBe('true')
+})
 it('selects the worker Harness without changing the main Session and saves it with Execution settings', async () => {
   at({ page: 'settings', query: { group: 'execution' } })
   await mount()

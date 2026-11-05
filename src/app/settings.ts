@@ -67,7 +67,7 @@ export interface SettingsHost {
   readonly context: Context
   readonly lifetime: AbortSignal
   /** Session manager through which the main Session is notified of saved settings. */
-  readonly sessions: Pick<Sessions, 'notify' | 'delivery'>
+  readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection'>
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
@@ -168,6 +168,16 @@ export class Settings {
       catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
     }
     rules.guard?.(current, candidate, origin)
+    if (block === 'executor') {
+      for (const harness of ['codex', 'claude-code'] as const) {
+        const selection = candidate.executor.harnessModels?.[harness]
+        if (selection && Object.keys(selection).length && (JSON.stringify(selection) !== JSON.stringify(current.executor.harnessModels?.[harness])
+          || candidate.executor.harness === harness && current.executor.harness !== harness)) {
+          try { await sessions.validateSelection(harness, selection) }
+          catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
+        }
+      }
+    }
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.

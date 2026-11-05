@@ -8,7 +8,9 @@ import { dirname } from 'node:path'
 import { z } from 'zod'
 import { key, liveTicket, latestAssignment, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
-import { ExternalTools, type WorkerMcpServer } from './external-tools.ts'
+import { ExternalTools } from './external-tools.ts'
+import { configurableHarness, HarnessCatalogSchema, harnessOf } from './harness.ts'
+import type { ExternalHarness, HarnessSelection } from '../policy.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import type { Effects } from './effects.ts'
@@ -21,14 +23,7 @@ import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
 import type { RegisterTool, Tool } from './tools/tool.ts'
 
-/** Optional API supplied by dsh-harness-provider; older versions cannot run external workers. */
-interface HarnessBridge {
-  linkProjects?(request: { sessionId: string; workspaceIds: string[]; paths: string[] }): Promise<unknown>
-  manageSession(id: string, options: { owner: string; harness: 'dsh' | 'codex' | 'claude-code';
-    context?: () => Promise<{ instructions: string; environment: Record<string, string | undefined>; mcpServers: WorkerMcpServer[] }> }): Promise<void>
-  releaseManagedSession(id: string, owner: string): Promise<void>
-}
-const harnessOf = (ctx: Context) => ctx.get('harness' as never) as HarnessBridge | undefined
+type HarnessBridge = NonNullable<ReturnType<typeof harnessOf>>
 
 /** Host dependencies used by `Sessions`. */
 export interface SessionsHost {
@@ -101,6 +96,13 @@ function noWait({ name, arguments: input }: { name: string; arguments: unknown }
  * Feeds session events into `RetryHealth` to report model budget waits on the `models` `HealthEntry`, and durably records which prompt revisions each session has worked under in `Store` (`KV.sessions.prompts`) to authorize prompt version reads.
  */
 export class Sessions {
+  async models(harness: ExternalHarness) {
+    const bridge = configurableHarness(this.host.context)
+    return HarnessCatalogSchema.parse(await bridge.models!({ sessionId: this.host.masterId, harness }))
+  }
+  async validateSelection(harness: ExternalHarness, selection: HarnessSelection): Promise<void> {
+    await configurableHarness(this.host.context).validateManagedSessionSelection!(this.host.masterId, harness, selection)
+  }
   private readonly agentDelivery: AgentDelivery
   /** Decorated agents mapped to their registered disposers and skill scope until the agent is disposed or `Sessions.dispose()` runs. */
   private readonly bindings = new Map<Agent, SessionBinding>()
@@ -182,13 +184,15 @@ export class Sessions {
     if (typeof bridge?.manageSession === 'function') {
       if (harness === 'dsh') await bridge.manageSession(id, { owner: 'dsh-superagent', harness })
       else {
+        const selection = settings.executor.harnessModels?.[harness]
+        if (selection && Object.keys(selection).length) configurableHarness(ctx)
         const assignment = latestAssignment(ticket!)!.id
         const active = () => {
           const current = this.host.store.tickets.get(ticket!.id)
           return !this.host.closing() && !!current && liveTicket(current) && latestAssignment(current)?.id === assignment
         }
         const mcp = await this.externalTools.connect(id, assignment, active, this.host.tools(result.agent, ticket))
-        await bridge.manageSession(id, { owner: 'dsh-superagent', harness, context: async () => {
+        await bridge.manageSession(id, { owner: 'dsh-superagent', harness, ...selection && Object.keys(selection).length ? { selection } : {}, context: async () => {
           if (!active()) throw new Error('Ticket assignment ended')
           const version = this.promptFor(result.agent, true)
           return { instructions: this.instructions(result.agent, true)

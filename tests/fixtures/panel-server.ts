@@ -372,6 +372,13 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET models': { answer: () => ({ default: { provider: 'host', model: 'default' }, routableProviders: [], failures: [],
     groups: [{ id: 'worker-provider', name: 'Worker provider', models: [{ id: 'worker-model', name: 'Worker model',
       reasoning: { efforts: [{ id: 'high', name: 'High' }] } }] }] }) },
+  'GET harness-models/:harness': { answer: ({ params }) => ({
+    models: [{ id: `${params.harness}-deep`, label: 'Deep', thinkingOptionIds: ['low', 'high'] },
+      { id: `${params.harness}-small`, label: 'Small', thinkingOptionIds: ['low'] }],
+    defaultModel: { id: `${params.harness}-deep`, label: 'Deep' }, defaultThinkingOptionId: 'low',
+    thinkingOptions: [{ id: 'low', label: 'Low' }, { id: 'high', label: 'High' }],
+    configOptions: [{ id: params.harness === 'codex' ? 'fast-mode' : 'fast', currentValue: false, choices: null }], error: null,
+  }) },
   'GET prompts': { query: ['revision', 'offset'], answer: () => server.prompts },
   'PUT prompts': { body: true, answer: ({ body }) => {
     const { revision } = server.prompts

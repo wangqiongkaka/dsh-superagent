@@ -9,6 +9,7 @@ import { usePanel } from './provider.tsx'
 import { TicketLine } from './rows.tsx'
 import { ConfigHistory, Field, Fields, ModelField, numberOf, useBlockDraft, useSettings } from './settings-kit.tsx'
 import { localized } from './text.ts'
+import { HarnessModelField } from './harness-model.tsx'
 import { ConfirmButton, Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './widgets.tsx'
 
 export function ExecutionStatus({ filter: current, state, reload }: {
@@ -99,7 +100,10 @@ export function ExecutionSettings() {
               options={[{ value: 'dsh', label: 'DSH' }, { value: 'codex', label: 'Codex' }, { value: 'claude-code', label: 'Claude Code' }]} />
           </Field>
           {value.harness === 'dsh' ? <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
-            onChange={model => edit({ model })} /></Section> : <Hint>{t('externalHarnessHint')}</Hint>}
+            onChange={model => edit({ model })} /></Section> : <Section title={t('executorModel')}>
+              <HarnessModelField key={value.harness} harness={value.harness} value={value.harnessModels?.[value.harness] ?? {}}
+                onChange={selection => edit({ harnessModels: { ...value.harnessModels, [value.harness]: selection } })} />
+            </Section>}
           <Field label={t('maxWorkers')} hint={t('maxWorkersHint')}>
             <Input type="number" min={LIMITS.maxWorkers.min} max={LIMITS.maxWorkers.max} required value={value.maxWorkers}
               onChange={event => edit({ maxWorkers: event.target.value })} />
