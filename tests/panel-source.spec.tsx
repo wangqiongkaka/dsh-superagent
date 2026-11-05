@@ -19,6 +19,7 @@ it('hides disabled legacy settings and labels enabled legacy settings', async ()
 it('saves independent group and direct-message repository bindings', async () => {
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
+  await click('团队群')
   await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'idcrm,backend')
   await type(field<HTMLInputElement>('私聊可用仓库'), 'backend')
   await type(field<HTMLInputElement>('主仓库标识（填写后启用 worktree）'), 'idcrm')
@@ -304,4 +305,41 @@ it('reads the settings again as soon as dsh-superagent answers after a save rest
   expect(server.requests.filter(request => request.path === 'settings').length).toBeGreaterThan(reads)
   expect(field('智能体的 GitHub CLI').matches(':disabled')).toBe(false)
   expect(field<HTMLInputElement>('智能体的 GitHub CLI').value).toBe('/opt/bin/gh-agent')
+})
+
+it.each([1, 6, 7])('collapses %i chats by default and retains edits when toggled', async count => {
+  server.settings.sources.feishu!.config.chats = Array.from({ length: count }, (_, n) => ({
+    chatId: n ? `oc_c${n}` : 'oc_team', listen: 'mentions',
+  }))
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  const summary = () => document.querySelector<HTMLElement>('#dt-source-feishu .dt-rows-summary')!
+  expect(summary().getAttribute('aria-expanded')).toBe('false')
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
+  await click(summary())
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(count)
+  await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'backend')
+  await click(summary())
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
+  await click(summary())
+  expect(field<HTMLInputElement>('仓库标识（逗号分隔）').value).toBe('backend')
+  await remount()
+  expect(summary().getAttribute('aria-expanded')).toBe('false')
+  await click(summary())
+  expect(field<HTMLInputElement>('仓库标识（逗号分隔）').value).toBe('backend')
+})
+
+it('adds a chat to an empty collapsed list and can collapse an unnamed draft', async () => {
+  server.settings.sources.feishu!.config.chats = []
+  at({ page: 'settings', query: { group: 'source' } })
+  await mount()
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
+  const form = document.querySelector('#dt-source-feishu')!
+  await click([...form.querySelectorAll('button')].find(button => button.textContent === '添加')!)
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(1)
+  await click('收起')
+  const summary = form.querySelector<HTMLElement>('.dt-rows-summary')!
+  expect(summary.textContent).toBe('接收的群')
+  await click(summary)
+  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(1)
 })
