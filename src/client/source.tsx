@@ -154,6 +154,6 @@ export function SourceStatus() {
         onClick={() => navigate(setupPage(elsewhere.place))}>{t('setupFixLink')}</button>
     </p>}
     <LoadState error={error} loading={!data} />
-    {data && <ul className="dt-list">{data.map(source => <SourceRow key={source.id} source={source} />)}</ul>}
+    {data && <ul className="dt-list">{data.filter(source => source.id !== 'github').map(source => <SourceRow key={source.id} source={source} />)}</ul>}
   </div>
 }

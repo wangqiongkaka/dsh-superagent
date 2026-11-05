@@ -35,7 +35,7 @@ it('shows each Source\'s state on the Source status and opens its settings from 
   await mount()
   await click(zh['tab.source'])
   expect(document.querySelector('.dt-status-title')?.textContent).toBe(zh.statusTitle)
-  expect(all('.dt-form > .dt-list > .dt-row .dt-row-name').map(title => title.textContent)).toEqual(['飞书', 'GitHub'])
+  expect(all('.dt-form > .dt-list > .dt-row .dt-row-name').map(title => title.textContent)).toEqual(['飞书'])
   expect(all('.dt-form > .dt-list > .dt-row')[0]!.querySelector('.dt-row-meta')?.textContent).toBe('24 小时到达 12被过滤 2最近 ' + document.querySelector('.dt-row-meta time, .dt-row-meta .dt-lv:last-child .dt-lv-value')?.textContent)
   expect(text()).toContain(zh['sourceState.error'])
   expect(text()).toContain('socket closed')
@@ -43,7 +43,7 @@ it('shows each Source\'s state on the Source status and opens its settings from 
   server.setup = { ...server.setup, problem: problemOf('agentCliUnset') }
   await remount()
   await click(zh['tab.source'])
-  await click(zh.sourceOpenSettings)
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
   expect(tab(zh['tab.settings']).getAttribute('aria-selected')).toBe('true')
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['term.source'])
   expect(all('.dt-card')[1]!.textContent).toContain('部署检查未通过：没有设置智能体的 GitHub CLI。')
@@ -211,10 +211,10 @@ it('shows the Sources waiting for the deployment check, and the problem on the S
   await click(zh['tab.source'])
   const rows = all('.dt-form > .dt-list > .dt-row')
   // The GitHub Source is where the problem is fixed, so it shows the error; Feishu waits.
-  expect(rows.map(row => row.querySelector('.dt-status-text')?.textContent)).toEqual(['等待部署检查', '出错'])
+  expect(rows.map(row => row.querySelector('.dt-status-text')?.textContent)).toEqual(['等待部署检查'])
   expect(text()).not.toContain('Waiting for setup')
-  expect(rows[1]!.textContent).toContain('部署检查未通过：GitHub 来源没有设置监听的仓库。')
-  await click(find(zh.sourceOpenSettings, '.dt-row button'))
+  expect(text()).not.toContain('GitHub 来源没有设置监听的仓库')
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['term.source'])
 })
 
@@ -224,8 +224,7 @@ it('shows a Source\'s health in the interface language, and a diagnostic as repo
   await mount()
   await click(zh['tab.source'])
   const github = all('.dt-form > .dt-list > .dt-row').find(row => row.querySelector('.dt-row-name')?.textContent === 'GitHub')!
-  expect(github.textContent).toContain('GitHub 来源：连续 3 次轮询失败，最近一次：EOF')
-  expect(github.textContent).not.toContain('consecutive')
+  expect(github).toBeUndefined()
   const feishu = all('.dt-form > .dt-list > .dt-row').find(row => row.querySelector('.dt-row-name')?.textContent === '飞书')!
   expect(feishu.querySelector('.dt-mono')?.textContent).toBe('socket closed')
 })
@@ -270,7 +269,7 @@ it('lists the messages a Source did not send in the last day under it, newest fi
     row.querySelector('.dt-tag')?.textContent, row.querySelector('button')?.textContent])
   expect(rows).toEqual([['Reply m3', zh['reason.channelGone'], '修复回归'],
     ['Reply m2', zh['reason.channelIgnored'], zh['term.thread']], ['Reply m1', zh['reason.channelGone'], undefined]])
-  expect(github!.textContent).toContain(`${zh.sourceDroppedTitle} 1`)
+  expect(github).toBeUndefined()
   await click(find('修复回归', '.dt-disclosure-body button'))
   expect(tab(zh['tab.execution']).getAttribute('aria-selected')).toBe('true')
   await remount()
