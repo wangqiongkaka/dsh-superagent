@@ -301,3 +301,15 @@ export async function startRuntime(seed?: (store: Store) => void) {
     jobs, subagents, step, claim }
 }
 export type Host = Awaited<ReturnType<typeof startRuntime>>
+
+/** Lifecycle fixture: receive, then explicitly route to the sole subscribed owner as the main Session would. */
+export function receiveAndRoute(runtime: Runtime, trigger: Trigger) {
+  const result = runtime.receive(trigger)
+  if (result !== 'stored' || !trigger.human) return result
+  const ids = [...new Set(trigger.threads.flatMap(ref => {
+    const thread = runtime.store.threads.get(`${ref.source}:${ref.id}`)
+    return thread?.subscriptions.filter(id => !thread.context?.includes(id)) ?? []
+  }))].filter(id => runtime.store.tickets.get(id)?.ended?.by !== 'human')
+  if (ids.length === 1) runtime.engine.attach(ids[0]!, trigger.id)
+  return result
+}

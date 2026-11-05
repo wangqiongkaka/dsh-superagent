@@ -17,13 +17,11 @@ The Source records whether a message addresses the agent: `mention` for a mentio
 
 ### Subscriptions: continuing existing work
 
-Every message on a subscribed Thread reaches its subscribed Tickets as context, including messages from bots and CI. This delivery bypasses the gate and grants no new authority. Each Ticket remains limited by its Mandate.
+Human messages always enter Eval first, including messages on subscribed Threads, GitHub comments and reviews, and automated reviewers using ordinary accounts. The gate still controls admission and strength. The main Session chooses accept, attach, stop or ignore before any worker receives the message. Subscriptions alone neither deliver human messages nor resume ended Tickets.
 
-A person's message on a Ticket's own Thread belongs to that Ticket's Executor to decide. The same applies when the main Session attaches a message to a Ticket. While an Executor owns the message, it takes no Eval and gets no Decision. Each Executor either handles the request within its Ticket's scope or hands it back for routing elsewhere.
+Automatic events, including bots and CI, still reach subscribed live Tickets as context, bypassing the gate without granting authority. They also take the Eval path independently under the existing admission policy.
 
-Ownership continues while the Ticket is live, even if a person removes its Subscription. It also covers an ended Ticket that was not stopped by a person and has the message waiting to resume it.
-
-The main Session receives a follow-up notice. While an Executor owns the message, the main Session may only stop work on the person's request; accept, attach, ignore and requeue are refused. A stop still passes through the gate with the follow-up strength described below.
+After the main Session attaches a human message, its worker owns that assigned message and handles it within the Ticket's Mandate. An ended Ticket resumes only through an explicit attach, unless stopped by a person. Ownership and hand-back handling also remain compatible with messages delivered by older versions. While a worker owns an already delivered message, duplicate routing is refused except for stop.
 
 ### Handing back and releasing follow-ups
 
@@ -39,7 +37,7 @@ A person can send an owned follow-up to Eval from the panel. If the main Session
 
 ### Context-only subscriptions
 
-An Executor can follow a related Thread, such as another Issue or pull request, for context. Its messages reach the Ticket but grant no authority or follow-up strength. Human messages there do not resume an ended Ticket unless the main Session attaches a message from that Thread. Notes from the main Session about other work are also context only.
+An Executor can follow a related Thread, such as another Issue or pull request, for context. Its automatic events reach the Ticket but grant no authority or follow-up strength; human messages go through the main Session first. Human messages there do not resume an ended Ticket unless the main Session attaches a message from that Thread. Notes from the main Session about other work are also context only.
 
 Human messages that reach no Ticket, including Threads whose Tickets were stopped by a person, take the Eval path. Bot messages take that path independently of their delivery to subscribed Tickets.
 
@@ -78,7 +76,7 @@ The admission table is part of the Policy version. Weakening a cell does not imm
 
 The host recognizes GitHub Apps, logins ending in `[bot]`, and Feishu bots as bots. A Source can list bots such as `dependabot[bot]` whose messages may become inferred candidates. They must either address the agent or post in a scope that receives every message. They cannot make explicit requests or stop Tickets.
 
-An automated reviewer using an ordinary account counts as a person to the host. Its comments reach subscribed Tickets and generate follow-up notices. Team prompt text must identify such accounts as automated reviewers.
+An automated reviewer using an ordinary account counts as a person to the host. Its comments enter Eval for main-Session routing before delivery to a Ticket. Team prompt text must identify such accounts as automated reviewers.
 
 ## Routing candidates
 
@@ -124,7 +122,7 @@ A condition on what the Executor may do with its own result, such as when it may
 
 ## Resume and stop
 
-An ended Ticket keeps its Mandate. A person's message on one of its own Threads can resume the same work without a new Eval or Decision, regardless of who sent it. Bots and CI do not wake ended Tickets. The Executor decides whether the request fits the scope and ends the round if it does not.
+An ended Ticket keeps its Mandate. A person's message first passes the gate and main-Session routing; an explicit attach can resume the same work under the existing Mandate. Bots and CI do not wake ended Tickets. The Executor decides whether the request fits the scope and ends the round if it does not.
 
 Only three operations change a Mandate: accept creates it, a person's stop withdraws it, and failed revalidation revokes it. A Ticket stopped by a person stays ended and receives nothing more. Work requested there needs a new accept.
 

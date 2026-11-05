@@ -11,4 +11,4 @@ description: 使用 gh 读取 GitHub Issue、PR、审核和 CI。
 
 审核评论 URL 以 `#discussion_r<ID>` 结尾时，读取 github/pulls/<PR>/thread/<ID>；其首条评论的 ID 是根 ID。处理结果需要回复时，使用 `gh api repos/<OWNER>/<REPO>/pulls/<PR>/comments/<ROOT>/replies --method POST -f body=<text>`，其中 `<OWNER>/<REPO>` 来自执行环境一节的 `$DSH_SUPERAGENT_GITHUB_REPOSITORY`。不得使用 `gh pr comment` 或 Issue 评论接口解释审核话题。在 `orchestrator_report` 中记录机器人运行标识、审核轮次和处置；PR 描述保留最终实现、验证及重大限制。
 
-宿主将订阅 PR 的评论、审核和 CI 直接送到绑定执行器。创建或接管工单 PR 后，立即以 `state: progress` 和 `pr_number` 调用 `orchestrator_report`，不要等待 CI 或交接。读取每个原始触发，并在实质工作前确认新人工请求。执行器报告仍交给主会话，由其在来源会话简短交付。
+宿主将订阅 PR 的 CI 等机器事件直接送到绑定执行器；人工评论和审核意见（含普通账号的自动审核消息）先由主会话判断归属，再派给执行器。创建或接管工单 PR 后，立即以 `state: progress` 和 `pr_number` 调用 `orchestrator_report`，不要等待 CI 或交接。读取每个原始触发，并在实质工作前确认新人工请求。执行器报告仍交给主会话，由其在来源会话简短交付。

@@ -102,12 +102,12 @@ Reviews without a body, such as approvals, also arrive as Triggers and can wake 
 ## How a Ticket ends
 
 - **Ready without a pull request:** a `ready` Report ends the Ticket as completed.
-- **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a person's later message on its Threads resumes it.
+- **Nothing to do:** an Executor that finds no work for a person to act on, such as a request that does not reproduce or is superseded, reports `dropped`. The Ticket ends without a message, unless a matched rule asks for one, and a later human message resumes it only after the main Session attaches it.
 ### Pull requests
 
 A Ticket follows the pull request it started from once its Executor reports it. It also follows each pull request opened from its branch once reported by the Executor or found by the GitHub Source. Reopened pull requests are followed again.
 
-The Ticket is done when none of the pull requests it opened remain open. If it opened none, all pull requests it follows must be closed. It then ends with the outcome of the last relevant close and keeps its Subscriptions, allowing a later human comment to resume it.
+The Ticket is done when none of the pull requests it opened remain open. If it opened none, all pull requests it follows must be closed. It then ends with the outcome of the last relevant close and keeps its Subscriptions, allowing the main Session to attach a later human comment and resume it.
 
 A close does not end the Ticket while resumed, retried or recovered work is unfinished. It also waits if the Executor acknowledged or answered a follow-up it owns but has not since made a non-progress Report or ended a turn after reading that message. A later `ready` Report ends the Ticket once the same pull-request completion rule is satisfied.
 
@@ -117,11 +117,11 @@ Chat Channels receive one final notice about the pull-request outcome. GitHub al
 
 ### Follow-ups and context Threads
 
-The Executor decides human follow-ups on its Ticket's own Threads. It handles in-scope requests and hands back requests beyond its scope or for another Ticket. Once no Executor owns the message, it becomes a candidate for the main Session. The main Session may otherwise act on the follow-up only to stop work at the person's request.
+The main Session routes every admitted human follow-up before delivery, including requests on a Ticket's own Threads. It attaches in-scope requests to existing Tickets or accepts independent work. The Executor handles the assigned request and may hand it back if misrouted; already delivered messages retain duplicate-routing protection.
 
 An Input counts as read after the Session takes it into a step and subsequently reports or ends a turn. When a Ticket ends, unread messages that were not acknowledged, answered or handed back return to Eval, as described in [002 Authorization](002-authorization.md). Read messages left without action, such as thanks, do not.
 
-Threads followed only for context still deliver messages, but do not give the Ticket ownership of human follow-ups or resume ended Tickets. Those messages can be assessed independently.
+Threads followed only for context still deliver automatic events, but do not give the Ticket ownership of human follow-ups or resume ended Tickets. Those messages can be assessed independently.
 
 Sources poll subscribed Threads while a live Ticket subscribes, and for two weeks after the later of the last Trigger and the subscribing Tickets' end. Afterwards, messages arrive only through ordinary intake: GitHub notifications or Feishu live events.
 
@@ -205,7 +205,7 @@ Stops dispatch, new Evals, Eval timeouts, Input delivery and replies; a launch a
 
 Sources keep recording Triggers, and a running Executor turn is not interrupted.
 
-A person's message to an ended Ticket waits: the first pass after the pause resumes the Ticket, if its Mandate holds under the Policy then.
+A human message received during a pause waits for main-Session routing. A message already attached to an ended Ticket waits for the pause to lift, then resumes it only if its Mandate still holds.
 
 An Eval in progress does not expire during a pause; its deadline moves later by the pause's length.
 ### Invalid configuration

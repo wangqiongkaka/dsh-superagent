@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'v
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { Runtime } from '../src/app/runtime.ts'
-import { jobRegistry } from './fixtures/host.ts'
+import { jobRegistry, receiveAndRoute } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
 import { mandateInstructions } from '../src/executor/dsh.ts'
 import { masterPrompt } from '../src/app/context.ts'
@@ -71,7 +71,7 @@ function subscribe(ticketId: string, ref: { source: string; id: string }): void 
   runtime.store.threads.save({ ...thread, subscriptions: [...new Set([...thread.subscriptions, ticketId])] })
 }
 async function receive(trigger: Trigger, target = runtime) {
-  const result = target.receive(trigger)
+  const result = receiveAndRoute(target, trigger)
   await target.idle()
   return result
 }
@@ -244,7 +244,7 @@ it('relays an explicit member mention as a candidate and creates the ticket, ack
   expect(await route({ kind: 'accept', trigger_id: trigger.id, title: 'again', worktree_name: worktreeName, acknowledgement: 'x' })).toMatchObject({ ticket: { ticket_id: ticket.id } })
 })
 
-it('fans a person\'s later thread message out to the live worker as context and tells the orchestrator, without an Eval', async () => {
+it('delivers an explicitly routed follow-up without a redundant orchestrator notice', async () => {
   const { ticket, sessionId } = await acceptedTicket()
   deliveries.mockClear()
   const followup = feishu('2', '顺便看看日志', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })
@@ -258,10 +258,8 @@ it('fans a person\'s later thread message out to the live worker as context and 
   expect(JSON.parse(((await runTool(sessionId, 'orchestrator_read', { resource })) as { text: string }).text)).toEqual(worker[0])
   expect(runtime.store.get(resource)).toBeUndefined()
   expect(runtime.store.tickets.get(ticket.id)!.inputs).toEqual([expect.objectContaining({ kind: 'trigger', triggerId: followup.id })])
-  expect(relays(runtime.masterId)).toEqual([{ kind: 'follow_up', trigger_id: followup.id, from: 'ou_guest', thread: `feishu:${CHAT}:om_1`,
-    at: followup.at, text: '顺便看看日志', delivered_to: [{ ticket_id: ticket.id, title: '修复回归', state: 'working' }],
-      note: expect.stringContaining('worker has it and decides') }])
-  expect(runtime.store.decisions.byThread(`feishu:${CHAT}:om_1`).map(decision => decision.triggerIds)).toEqual([[ticket.origin.triggerId]])
+  expect(relays(runtime.masterId)).toEqual([])
+  expect(runtime.store.decisions.byThread(`feishu:${CHAT}:om_1`).map(decision => decision.triggerIds)).toEqual([[ticket.origin.triggerId], [followup.id]])
   expect(await runTool(sessionId, 'orchestrator_read', { resource: `trigger/${followup.id}` }))
     .toMatchObject({ trigger_id: followup.id, around: { before: expect.objectContaining({ read: `trigger/${key('feishu', 'om_1')}` }) } })
 })
@@ -1249,20 +1247,20 @@ it('keeps the receipt of a message withdrawn while it went out, so its id is not
   expect([runtime.store.receipts.get('raced'), runtime.effects.pending('reply')]).toEqual([expect.objectContaining({ text: 'Done', status: 'sent' }), false])
 })
 
-it('resumes several ended tickets on one thread from one message without the launch waiting on itself', async () => {
+it('resumes only the selected ended ticket when several tickets share a thread', async () => {
   const first = await acceptedTicket()
-  const other = feishu('30', '@bot 顺手把这里也改了', { root_id: undefined })
-  await receive(other)
-  await route({ kind: 'attach', ticket_id: first.ticket.id, trigger_id: other.id })
-  // A request on the first ticket's thread becomes a second ticket there once the first's worker hands it back.
   const another = feishu('31', '@bot 另一件事', { root_id: 'om_1' })
-  await receive(another)
-  await runTool(first.sessionId, 'orchestrator_trigger_handback', { trigger_id: another.id, reason: 'Another change.' })
-  const second = await acceptedTicket(another)
-  for (const ticket of [first, second]) await runTool(ticket.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
-  await receive(feishu('32', '还有问题', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
-  await vi.waitFor(() => expect([first, second].map(ticket => runtime.store.tickets.get(ticket.ticket.id)!.ended)).toEqual([undefined, undefined]), { timeout: 3000 })
-  await vi.waitFor(() => expect([first, second].map(ticket => runtime.store.tickets.get(ticket.ticket.id)!.assignments.at(-1)!.state)).toEqual(['running', 'running']), { timeout: 3000 })
+  runtime.receive(another); await runtime.idle()
+  const result = await route({ kind: 'accept', trigger_id: another.id, title: 'Other', worktree_name: 'other', acknowledgement: '收到。' })
+  const secondId = (result.ticket as { ticket_id: string }).ticket_id
+  for (const id of [first.ticket.id, secondId]) await runTool(`worker-${id}`, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
+  const follow = feishu('32', '还有问题', { mentions: [], root_id: 'om_1' })
+  runtime.receive(follow); await runtime.idle()
+  expect([first.ticket.id, secondId].every(id => runtime.store.tickets.get(id)!.ended)).toBe(true)
+  await route({ kind: 'attach', ticket_id: first.ticket.id, trigger_id: follow.id })
+  await runtime.idle()
+  expect(runtime.store.tickets.get(first.ticket.id)!.ended).toBeUndefined()
+  expect(runtime.store.tickets.get(secondId)!.ended).toBeDefined()
 })
 
 it('attaches a message to an ended ticket and so resumes it', async () => {

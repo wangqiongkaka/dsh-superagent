@@ -7,7 +7,7 @@ import { WorkerSlots, inputMessage, mandateInstructions, ticketExecution, transi
 import { SettingsSchema } from '../src/policy.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { deferred, waitUntil } from './fixtures/async.ts'
-import { CHAT, MEMBER, feishu, startRuntime, type Host } from './fixtures/host.ts'
+import { CHAT, MEMBER, receiveAndRoute, feishu, startRuntime, type Host } from './fixtures/host.ts'
 
 let h: Host
 beforeEach(async () => { h = await startRuntime() })
@@ -34,10 +34,10 @@ it('evaluates a message that arrives on a thread while an earlier candidate\'s c
   vi.mocked(Commands.prototype.lark).mockImplementation(async args => { if (args.includes('+messages-mget') && args.includes('om_1')) await gate.promise; return lark })
   await h.runtime.settings.pause(true, 'panel')
   const a1 = feishu('1', '@bot 修 A'), b1 = feishu('2', '@bot 修 B'), b2 = feishu('3', '@bot B 还有这个', { root_id: 'om_2' })
-  h.runtime.receive(a1); h.runtime.receive(b1)
+  receiveAndRoute(h.runtime, a1); receiveAndRoute(h.runtime, b1)
   await h.runtime.settings.pause(false, 'panel')
   await waitUntil(() => linkLookedUp('om_1'))
-  h.runtime.receive(b2)
+  receiveAndRoute(h.runtime, b2)
   gate.resolve(); await h.runtime.idle()
   const threadB = `feishu:${CHAT}:om_2`
   expect(h.runtime.store.threads.get(threadB)).toMatchObject({ evaluating: { triggerIds: [b1.id] }, pending: [b2.id] })
@@ -52,8 +52,8 @@ it('delivers nothing to a ticket a person stopped while an earlier ticket\'s del
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
   const two = await h.acceptedTicket(feishu('5', '@bot 修二'))
   await h.runtime.settings.pause(true, 'panel')
-  h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
-  h.runtime.receive(feishu('6', '二的补充', { mentions: [], root_id: 'om_5', sender_id: 'ou_guest' }))
+  receiveAndRoute(h.runtime, feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
+  receiveAndRoute(h.runtime, feishu('6', '二的补充', { mentions: [], root_id: 'om_5', sender_id: 'ou_guest' }))
   // Tickets are processed newest-first, so holding ticket two pauses the pass before ticket one is delivered.
   const gate = deferred()
   const held = holdSession(two.sessionId, gate.promise)
@@ -69,7 +69,7 @@ it('delivers nothing to a ticket a person stopped while an earlier ticket\'s del
 it('drops a delivery whose ticket a person stopped while it waited for the worker Session', async () => {
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
   await h.runtime.settings.pause(true, 'panel')
-  h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
+  receiveAndRoute(h.runtime, feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' }))
   const gate = deferred()
   const held = holdSession(one.sessionId, gate.promise)
   const resumed = h.runtime.settings.pause(false, 'panel')
@@ -88,7 +88,7 @@ it('runs prepare commands in the background, side by side, while accepts, intake
   h.hooks.prepare = prepare.promise
   const prepares = () => h.subprocess.spawn.mock.calls.filter(([spec]) => spec.argv[0] === 'sh').length
   const first = [feishu('1', '@bot 修一'), feishu('2', '@bot 修二')]
-  for (const trigger of first) h.runtime.receive(trigger)
+  for (const trigger of first) receiveAndRoute(h.runtime, trigger)
   await h.runtime.idle()
   for (const [index, trigger] of first.entries()) {
     const accepted = await h.route({ kind: 'accept', trigger_id: trigger.id, title: 'fix', worktree_name: `fix-${index}`, acknowledgement: '收到。' })
@@ -97,7 +97,7 @@ it('runs prepare commands in the background, side by side, while accepts, intake
   await waitUntil(() => prepares() === 2)
   // A Source loop's next message is stored at once, and a pass relays it while both prepare commands still run.
   const later = feishu('3', '@bot 修三')
-  expect(h.runtime.receive(later)).toBe('stored')
+  expect(receiveAndRoute(h.runtime, later)).toBe('stored')
   await h.runtime.pump()
   expect(h.candidates()).toEqual([...first, later].map(trigger => trigger.id))
   prepare.resolve()
@@ -111,7 +111,7 @@ it('keeps a launch that a pause cut short queued, and finishes it once processin
   const prepare = deferred()
   h.hooks.prepare = prepare.promise
   const trigger = feishu('1', '@bot 修一')
-  h.runtime.receive(trigger); await h.runtime.idle()
+  receiveAndRoute(h.runtime, trigger); await h.runtime.idle()
   await h.route({ kind: 'accept', trigger_id: trigger.id, title: 'fix', worktree_name: 'fix-one', acknowledgement: '收到。' })
   await waitUntil(() => h.subprocess.spawn.mock.calls.some(([spec]) => spec.argv[0] === 'sh'))
   await h.runtime.settings.pause(true, 'panel')
@@ -132,7 +132,7 @@ it('wakes an idle worker for a bot\'s Input only when a worker slot is free, and
   h.agents.get(one.sessionId)!.status = 'idle'
   const two = await h.acceptedTicket(feishu('5', '@bot 修二'))
   expect(h.agents.get(two.sessionId)!.status).toBe('running')
-  h.runtime.receive(botMessage()); await h.runtime.idle()
+  receiveAndRoute(h.runtime, botMessage()); await h.runtime.idle()
   // Ticket two's worker takes the only slot, so ticket one's Input waits.
   expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toHaveLength(1)
   h.agents.get(two.sessionId)!.status = 'idle'
@@ -150,7 +150,7 @@ it('wakes an idle worker for a person\'s message at once, in the slot kept beyon
   h.agents.get(one.sessionId)!.status = 'idle'
   const two = await h.acceptedTicket(feishu('5', '@bot 修二'))
   expect(h.agents.get(two.sessionId)!.status).toBe('running')
-  h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })); await h.runtime.idle()
+  receiveAndRoute(h.runtime, feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })); await h.runtime.idle()
   expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toEqual([])
   expect(h.agents.get(one.sessionId)!.status).toBe('running')
 })
@@ -163,10 +163,10 @@ it('counts a launch under way against maxWorkers, so a bot\'s Input for an idle 
   // Ticket two's launch holds the only slot while its prepare command runs, before its worker's Session does.
   const prepare = deferred()
   h.hooks.prepare = prepare.promise
-  h.runtime.receive(feishu('5', '@bot 修二')); await h.runtime.idle()
+  receiveAndRoute(h.runtime, feishu('5', '@bot 修二')); await h.runtime.idle()
   await h.route({ kind: 'accept', trigger_id: feishu('5', '').id, title: 'two', worktree_name: 'fix-two', acknowledgement: '收到。' })
   await waitUntil(() => h.subprocess.spawn.mock.calls.filter(([spec]) => spec.argv[0] === 'sh').length === 2)
-  h.runtime.receive(botMessage()); await h.runtime.pump()
+  receiveAndRoute(h.runtime, botMessage()); await h.runtime.pump()
   expect(h.runtime.store.tickets.get(one.ticket.id)!.undelivered).toHaveLength(1)
   expect(h.agents.get(one.sessionId)!.status).toBe('idle')
   prepare.resolve(); await h.runtime.idle()
@@ -184,7 +184,7 @@ it('records on the ticket that its worker Session could not be created again', a
     if (id === one.sessionId) throw new Error('The Session store is offline')
     return h.resolveDefault(id)
   })
-  h.runtime.receive(feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })); await h.runtime.idle()
+  receiveAndRoute(h.runtime, feishu('2', '一的补充', { mentions: [], root_id: 'om_1', sender_id: 'ou_guest' })); await h.runtime.idle()
   expect(h.runtime.store.tickets.get(one.ticket.id)).toMatchObject({ delivery: { error: expect.stringContaining('The Session store is offline') } })
 })
 
@@ -420,7 +420,7 @@ describe('a worker whose work runs in the background', () => {
     // A person asks for more; the worker acknowledges it, starts the work in the background and its turn ends.
     await new Promise(resolve => setTimeout(resolve, 5))
     const more = feishu('2', '再加个测试', { mentions: [], root_id: 'om_1' })
-    h.runtime.receive(more); await h.runtime.idle()
+    receiveAndRoute(h.runtime, more); await h.runtime.idle()
     await vi.waitFor(() => expect(ticket().undelivered).toEqual([]))
     await h.runTool(one.sessionId, 'orchestrator_ack', { trigger_id: more.id, text: '收到' })
     h.jobs.run(one.sessionId)
@@ -439,7 +439,7 @@ describe('a worker whose work runs in the background', () => {
     expect(h.runtime.executor.activeCount()).toBe(0)
     // A person asks for more; the worker starts the tests in the background and ends its turn.
     await new Promise(resolve => setTimeout(resolve, 5))
-    h.runtime.receive(feishu('2', '再加个测试', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
+    receiveAndRoute(h.runtime, feishu('2', '再加个测试', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
     await vi.waitFor(() => expect(latestAssignment(ticket())?.deliveredAt! >= latestAssignment(ticket())!.report!.at).toBe(true))
     const job = h.jobs.run(one.sessionId)
     idle(one.sessionId); await h.runtime.idle()
@@ -513,7 +513,7 @@ describe('a worker whose work runs in the background', () => {
     h.subagents.service.drainChildren.mockImplementationOnce(async (parent, ids) => { await drain.promise; await release(parent, ids) })
     await new Promise(resolve => setTimeout(resolve, 5))
     const held = holdSession(one.sessionId, session.promise)
-    h.runtime.receive(feishu('2', '按钮再大一点', { mentions: [], root_id: 'om_1' }))
+    receiveAndRoute(h.runtime, feishu('2', '按钮再大一点', { mentions: [], root_id: 'om_1' }))
     await vi.waitFor(() => expect(held()).toBe(true))
     idle(one.sessionId)
     await vi.waitFor(() => expect(h.subagents.service.drainChildren).toHaveBeenCalled())
@@ -656,7 +656,7 @@ describe('what a worker read', () => {
   it('sends to Eval a message that woke a ticket and that a retry delivered after a progress report, at a dropped report', async () => {
     const { one, thanks, ticket } = await completed()
     const pass = failing(one.sessionId, '谢谢')
-    h.runtime.receive(thanks); await h.runtime.idle()
+    receiveAndRoute(h.runtime, thanks); await h.runtime.idle()
     expect(ticket().delivery).toBeDefined()
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'progress', summary: 'Looking' })
     pass()
@@ -670,7 +670,7 @@ describe('what a worker read', () => {
   it('counts a delivered message as read only once its step took it into the Session, not when a cut-off step claimed it', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
     const more = feishu('2', '再改一下', { mentions: [], root_id: 'om_1' })
-    h.runtime.receive(more); await h.runtime.idle()
+    receiveAndRoute(h.runtime, more); await h.runtime.idle()
     const input = () => h.runtime.store.tickets.get(one.ticket.id)!.inputs.find(item => item.kind === 'trigger' && item.triggerId === more.id) as
       { readAt?: string | null }
     await vi.waitFor(() => expect(input().readAt).toBe(null))
@@ -692,7 +692,7 @@ describe('what a worker read', () => {
   })
   it('delivers once a message a crash left waiting in a worker\'s Session, which the restart puts back for the next Assignment', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
-    h.runtime.receive(feishu('2', '再改一下', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
+    receiveAndRoute(h.runtime, feishu('2', '再改一下', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
     const copies = () => h.deliveries.mock.calls.filter(([call]) => call.sessionId === one.sessionId && call.text.includes('再改一下'))
     await vi.waitFor(() => expect(copies()).toHaveLength(1))
     // The process dies: the worker's agent is not loaded when the restart runs, and its inbox, which holds the message,
@@ -709,7 +709,7 @@ describe('what a worker read', () => {
   })
   it('gives the Assignment an in-process restart starts a message a cut-off step had claimed, once', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
-    h.runtime.receive(feishu('2', '再改一下', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
+    receiveAndRoute(h.runtime, feishu('2', '再改一下', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
     const sent = () => h.deliveries.mock.calls.filter(([call]) => call.sessionId === one.sessionId && call.text.includes('再改一下')).length
     await vi.waitFor(() => expect(sent()).toBe(1))
     // A step claims it and the restart cuts the step off before the Session took it, which drops it.
@@ -722,7 +722,7 @@ describe('what a worker read', () => {
   it('counts a message that woke a ticket as read by a later dropped report once a step of its worker took it', async () => {
     const { one, thanks } = await completed()
     // The resumed Assignment's message wakes the worker; its next step takes the note that it resumed and the message.
-    h.runtime.receive(thanks); await h.runtime.idle()
+    receiveAndRoute(h.runtime, thanks); await h.runtime.idle()
     h.step(one.sessionId)
     await later()
     await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })
@@ -732,7 +732,7 @@ describe('what a worker read', () => {
   it('counts a message a retry delivered to its idle worker as read by the report of the turn it woke', async () => {
     const { one, thanks, ticket } = await completed()
     const pass = failing(one.sessionId, '谢谢')
-    h.runtime.receive(thanks); await h.runtime.idle()
+    receiveAndRoute(h.runtime, thanks); await h.runtime.idle()
     idle(one.sessionId)
     await vi.waitFor(() => expect(latestAssignment(ticket())?.report?.state).toBe('waiting'))
     pass()
@@ -752,7 +752,7 @@ describe('what a worker read', () => {
     // A person's thanks reaches the worker after the step of its report, and its turn ends with no step taking it.
     await later()
     const thanks = feishu('2', '@bot 谢谢', { root_id: 'om_1' })
-    h.runtime.receive(thanks); await h.runtime.idle()
+    receiveAndRoute(h.runtime, thanks); await h.runtime.idle()
     idle(one.sessionId)
     await vi.waitFor(() => expect(latestAssignment(ticket())?.report?.state).toBe('waiting'))
     await later()
@@ -802,7 +802,7 @@ it('reports a worker waiting when its turn ends after a person answered its bloc
   await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which color?' })
   // The person answers later than the report.
   await new Promise(resolve => setTimeout(resolve, 5))
-  h.runtime.receive(feishu('2', '蓝色', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
+  receiveAndRoute(h.runtime, feishu('2', '蓝色', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()
   const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
   expect(waitsForPerson(ticket())).toBe(false)
   h.agents.get(one.sessionId)!.status = 'idle'
@@ -823,7 +823,7 @@ it('resumes an ended ticket a person wrote to during a pause once it lifts, unde
   const first = await ended('1'), second = await ended('3')
   const followUp = async (id: string, root: string) => {
     await h.runtime.settings.pause(true, 'panel')
-    h.runtime.receive(feishu(id, '再改一下', { mentions: [], root_id: root })); await h.runtime.idle()
+    receiveAndRoute(h.runtime, feishu(id, '再改一下', { mentions: [], root_id: root })); await h.runtime.idle()
   }
   // While processing is paused, the message waits on the ended ticket; the first pass after the pause resumes it.
   await followUp('2', 'om_1')
