@@ -145,6 +145,9 @@ it('sets the Feishu admission table per receiving scope, offering only the cells
     row.querySelectorAll('select').length])
   // Chats receiving every message have all three cells; @-only chats only the mention cell; other chats nothing while not received.
   expect(rows).toEqual([['团队群', 3], ['另一个群', 1], ['其他群', 0], ['私聊', 1]])
+  expect(all('.dt-admission thead th').map(cell => [cell.getAttribute('scope'), cell.textContent])).toEqual([
+    ['col', '接收范围'], ['col', '名单内未 @'], ['col', '名单外点名智能体'], ['col', '名单外未 @'],
+  ])
   const cell = field<HTMLSelectElement>('团队群 · 名单外 · 点名智能体')
   expect(cell.value).toBe('ignore')
   await type(cell, 'explicit')
@@ -210,5 +213,5 @@ it('shows the GitHub Source\'s switches for what it receives across the reposito
   expect(rows).toEqual([['New Issues', 3], ['New pull requests', 1], ['Comments', 3], ['Default branch CI', 1]])
   // CI has no sender: its one cell is that of a message off the list that does not mention the agent.
   expect(field('Default branch CI · Not on the list · no mention')).toBeTruthy()
-  expect(all('.dt-admission thead th').map(cell => cell.textContent)).toContain(en.admissionAddressed)
+  expect(all('.dt-admission thead th').map(cell => cell.textContent)).toContain(en.admissionUnlisted + en.admissionAddressed)
 })

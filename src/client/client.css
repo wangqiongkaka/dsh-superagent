@@ -380,6 +380,7 @@ a.dt-btn, a.dt-btn:hover { text-decoration: none; }
 .dt-compare { margin-left: auto; }
 .dt-admission th { white-space: nowrap; }
 .dt-admission thead tr:first-child th:not(:first-child) { color: var(--dsw-alias-label-secondary); font-weight: 500; }
+.dt-admission-heading-detail { display: block; margin-top: 4px; font-weight: 400; color: var(--dsw-alias-label-caption); }
 .dt-admission td { vertical-align: middle; }
 .dt-admission-scope { color: var(--dsw-alias-label-primary); font-size: 13px; }
 .dt-admission-scope small { display: block; font-size: 11px; color: var(--dsw-alias-label-caption); }

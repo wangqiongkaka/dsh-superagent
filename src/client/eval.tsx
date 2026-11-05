@@ -120,8 +120,10 @@ function AdmissionTable({ rows, labels, table, explicit, onChange }: {
     <Hint>{explicit}</Hint>
     <table className="dt-table dt-admission">
       <thead>
-        <tr><th rowSpan={2}>{t('admissionScope')}</th><th>{t('admissionListed')}</th><th colSpan={2}>{t('admissionUnlisted')}</th></tr>
-        <tr><th>{t('admissionUnaddressed')}</th><th>{t('admissionAddressed')}</th><th>{t('admissionUnaddressed')}</th></tr>
+        <tr><th scope="col">{t('admissionScope')}</th>{CELLS.map(cell => <th key={cell} scope="col">
+          {t(cell === 'listedUnaddressed' ? 'admissionListed' : 'admissionUnlisted')}
+          <span className="dt-admission-heading-detail">{t(cell === 'unlistedAddressed' ? 'admissionAddressed' : 'admissionUnaddressed')}</span>
+        </th>)}</tr>
       </thead>
       <tbody>{rows.map(row => <tr key={row.id}>
         <td className="dt-admission-scope">{name(row)}<small>{localized(t, row.note)}</small></td>
