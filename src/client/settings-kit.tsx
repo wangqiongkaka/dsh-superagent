@@ -179,6 +179,7 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
   })
   const label = localized(t, field.label), hint = localized(t, field.hint)
   const rows = Array.isArray(value) ? value as Row[] : []
+  const collapsible = field.collapsed || rows.length > ROWS_SHOWN
   const set = (index: number, row: Row) => onChange(rows.map((item, position) => position === index ? row : item))
   const key = field.columns[0]!
   const savedKeys = new Set((Array.isArray(saved) ? saved as Row[] : []).map(row => row[key.key]))
@@ -224,11 +225,11 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
           blank]) }}>{t('addRow')}</Button>
       </span>
     </div>
-    {rows.length > ROWS_SHOWN && <button type="button" className="dt-textlink dt-rows-summary" aria-expanded={open}
+    {rows.length > 0 && collapsible && <button type="button" className="dt-textlink dt-rows-summary" aria-expanded={open}
       onClick={() => setOpen(!open)}>
-      {open ? t('collapse') : rows.map(rowName).join(t('listSeparator'))}
+      {open ? t('collapse') : rows.map(rowName).join(t('listSeparator')) || label}
     </button>}
-    {(rows.length <= ROWS_SHOWN || open) && <ul className="dt-rows"
+    {(!collapsible || open) && <ul className="dt-rows"
       style={{ ['--dt-columns' as string]: field.columns.length }}>{rows.map((row, index) => <li key={index} className={field.columns.length > 2 ? 'dt-rows-item dt-rows-expanded' : 'dt-rows-item'}>
       {field.columns.map(column => field.columns.length > 2 ? <div className="dt-row-cell" key={column.key}>
         <span className="dt-hint">{localized(t, column.label)}</span>{cell(row, index, column)}
