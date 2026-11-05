@@ -9,7 +9,7 @@ import { ticketMark } from './marks.ts'
 import { GLOSSARY, GLOSSARY_VALUES, en, zh, type DshSuperagentKey } from './locales.ts'
 import { OverviewPage } from './overview.tsx'
 import { PanelProvider, usePanel, usePanelData } from './provider.tsx'
-import { HOME, TABS, initialLocation, lastSettingsGroup, remember, routeLabel, settingsRoute, type Location, type Route,
+import { HOME, TABS, OPEN_EXECUTION, initialLocation, lastSettingsGroup, remember, routeLabel, settingsRoute, type Location, type Route,
   type Tab } from './route.ts'
 import { SettingsPage } from './settings.tsx'
 import { SourceStatus } from './source.tsx'
@@ -172,6 +172,11 @@ function Pages({ route, openTab, deploymentForm }: { route: Route; openTab: (tab
 /** Root panel component managing route history and shared panel state. */
 export function App({ t, openSession, deploymentForm }: AppProps) {
   const [location, setLocation] = useState(initialLocation)
+  useEffect(() => {
+    const open = (event: Event) => setLocation((event as CustomEvent<Location>).detail)
+    window.addEventListener(OPEN_EXECUTION, open)
+    return () => window.removeEventListener(OPEN_EXECUTION, open)
+  }, [])
   useEffect(() => { remember(location) }, [location])
   // Preserve the last opened settings group across navigation so the Settings tab reopens at it.
   const move = useCallback((next: (current: Location) => Pick<Location, 'route' | 'stack'>) =>

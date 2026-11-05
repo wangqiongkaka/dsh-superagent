@@ -21,3 +21,7 @@ export async function openKnownSession(sessions: Pick<ISessions, 'list' | 'refre
   open(id)
   return true
 }
+
+/** Returns the ticket ID of an executor Session, or undefined for unrelated Sessions. */
+export const ticketOfSession = (sessionId: string): string | undefined => sessionId.startsWith('worker-')
+  ? sessionId.slice('worker-'.length) || undefined : undefined

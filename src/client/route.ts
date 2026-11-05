@@ -65,3 +65,14 @@ export function initialLocation(): Location {
 export function remember(location: Location): void {
   try { sessionStorage.setItem(ROUTE_KEY, JSON.stringify(location)) } catch (failure) { void failure /* Route memory is a convenience. */ }
 }
+
+
+export const OPEN_EXECUTION = 'dsh-superagent:open-execution'
+/** Works both before the management panel mounts and while it remains mounted. */
+export function openExecution(id: string): void {
+  const current = initialLocation()
+  const location: Location = { route: { page: 'execution', id }, stack: [...current.stack, current.route].slice(-20),
+    group: lastSettingsGroup(current) }
+  remember(location)
+  window.dispatchEvent(new CustomEvent<Location>(OPEN_EXECUTION, { detail: location }))
+}

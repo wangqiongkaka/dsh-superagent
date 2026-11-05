@@ -21,6 +21,7 @@ function fixture(listed: string[]) {
     effect: (effect: () => unknown) => { effect() },
     sessions: { list: { getSnapshot: () => ({ phase: 'ready', byId: Object.fromEntries(listed.map(id => [id, {}])) }) }, refresh: vi.fn(async () => {}) },
     uiWorkspace: { openSession: vi.fn() },
+    layout: { selectPanel: vi.fn() },
     // Omit config form service so Deployment renders read-only.
     get: () => undefined,
   }
@@ -47,12 +48,12 @@ const serve = () => vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     setup: { machine: { stateDir: '/srv/state', worktreeRoot: '/srv/state/worktrees', blockedCommands: [], promptMaxChars: 100000, admissionContextMaxPages: 10, admissionContextTimeoutMs: 15000 }, problem: null, feishuProblem: null, accounts: null } })
   return Response.json({ error: 'unavailable' }, { status: 503 })
 }))
-afterEach(() => { vi.unstubAllGlobals() })
+afterEach(() => { vi.unstubAllGlobals(); sessionStorage.clear() })
 
 it('registers a localized main panel, sidebar entry and Plugin Manager row page, and no settings section', () => {
   const { entries, dictionaries, main, nav } = fixture([])
-  expect(entries.map(entry => entry.options.name)).toEqual(['main', 'sidebar.panellist', 'plugins.row.config'])
-  expect(entries[2]!.options).toMatchObject({ key: 'dsh-superagent#dsh-superagent', locale: 'dshSuperagent' })
+  expect(entries.map(entry => entry.options.name)).toEqual(['sidebar.workspaces.session.row.action', 'main', 'sidebar.panellist', 'plugins.row.config'])
+  expect(entries[3]!.options).toMatchObject({ key: 'dsh-superagent#dsh-superagent', locale: 'dshSuperagent' })
   expect(Object.keys(dictionaries)).toEqual(['dshSuperagent'])
   expect(main.options).toMatchObject({ key: 'dsh-superagent', locale: 'dshSuperagent' })
   expect(nav.options).toMatchObject({ id: 'dsh-superagent', order: 10, locale: 'dshSuperagent' })
@@ -142,4 +143,23 @@ it('tells a dsh-superagent that does not answer from a record it does not have, 
     status: 400, missing: false, unreachable: false })
   expect(await failure(async () => Response.json({ error: 'Unknown ticket', code: 'unknownTicket' }, { status: 404 }))).toEqual({
     message: 'user unknownTicket', status: 404, missing: true, unreachable: false })
+})
+
+
+it.each([false, true])('opens the matching ticket from a Session (panel mounted: %s)', async mounted => {
+  serve()
+  const { ctx, entries, main } = fixture([])
+  const panel = mounted ? await render(main, { t }) : undefined
+  const action = entries.find(entry => entry.options.name === 'sidebar.workspaces.session.row.action')!
+  const unrelated = await render(action, { sessionId: 'ordinary-session' })
+  expect(unrelated.container.querySelector('button')).toBeNull()
+  unrelated.dispose()
+  const header = await render(action, { sessionId: 'worker-ticket-123' })
+  expect(header.container.querySelector('button')?.getAttribute('aria-label')).toBe(zh.executionStatus)
+  await act(async () => { header.container.querySelector('button')!.click() })
+  expect(ctx.layout.selectPanel).toHaveBeenCalledExactlyOnceWith('dsh-superagent')
+  const opened = panel ?? await render(main, { t })
+  expect(JSON.parse(sessionStorage.getItem('dsh-superagent/route')!).route).toEqual({ page: 'execution', id: 'ticket-123' })
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).endsWith('/tickets/ticket-123'))).toBe(true)
+  opened.dispose(); header.dispose()
 })

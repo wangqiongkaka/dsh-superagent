@@ -6,6 +6,8 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  executionStatus: ['执行状态', 'Execution status'],
+  openExecutionStatus: ['查看此会话对应的工单执行状态', 'View the execution status of this session’s ticket'],
   cleanupIgnored: ['连同忽略文件清理', 'Remove including ignored files'],
   cleanupIgnoredConfirm: ['将删除仓库 {repository} 的 worktree 及刚才列出的 {count} 个忽略文件。这些文件无法通过 Git 恢复，请确认已备份所需资料。源码修改、普通未跟踪文件和未推送提交仍会阻止清理。', 'Remove the worktree for {repository} and the {count} listed ignored files. Git cannot restore these files; back up anything needed first. Modified, untracked or unpublished work still blocks cleanup.'],
   cleanupWorktrees: ['清理 worktree', 'Clean up worktrees'],

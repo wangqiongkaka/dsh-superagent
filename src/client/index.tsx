@@ -10,8 +10,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PluginConfigViewProps } from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { openKnownSession, SessionNavigationError } from '../navigation.ts'
+import { openKnownSession, SessionNavigationError, ticketOfSession } from '../navigation.ts'
 import { App } from './app.tsx'
+import { Button, Icon } from './controls.tsx'
+import { openExecution } from './route.ts'
+import STYLES from './client.css?raw'
 import { PluginConfig, usePageForm } from './deployment.tsx'
 import { en, zh } from './locales.ts'
 import type { T } from './text.ts'
@@ -45,11 +48,25 @@ function Mounted({ ctx, t }: { ctx: ClientContext; t: T }) {
   return <App t={t} openSession={openSession} deploymentForm={form} />
 }
 
-export const inject = ['slots', 'locale', 'sessions', 'uiWorkspace']
+export const inject = ['slots', 'locale', 'sessions', 'uiWorkspace', 'layout']
 /** Registers the panel, sidebar icon, and Plugin Manager config view; `configForms` is optional (without it, machine settings are read-only). */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-superagent: dictionaries')
   const t = ctx.locale.bind(NS)
+  ctx.effect(() => {
+    const style = document.createElement('style'); style.textContent = STYLES; document.head.append(style)
+    return () => style.remove()
+  }, 'dsh-superagent: session action styles')
+  ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
+    name: 'sidebar.workspaces.session.row.action', id: 'superagent-execution', locale: NS,
+  }, ({ sessionId }: { sessionId: string }) => {
+    const id = ticketOfSession(sessionId)
+    if (!id) return null
+    return <Button size="sm" style={{ padding: 4 }} icon={<Icon name="external" />} title={t('openExecutionStatus')}
+      aria-label={t('executionStatus')} onClick={event => {
+        event.stopPropagation(); openExecution(id); ctx.layout.selectPanel(PANEL_ID)
+      }} />
+  }))
   ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS, inject: () => ({}) },
     (props: { t: T }) => <Mounted ctx={ctx} t={props.t} />))
   ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({ name: 'sidebar.panellist', id: PANEL_ID, order: 10, label: () => t('panel'), locale: NS }, HammerIcon))
