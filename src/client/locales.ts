@@ -6,6 +6,9 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  cleanupWorktrees: ['清理 worktree', 'Clean up worktrees'],
+  cleanupWorktreesConfirm: ['仅清理已结束工单的干净目录，且当前提交必须已存在于远端分支。修改、未跟踪及忽略的文件都会阻止清理。同时移除对应工作区条目，保留会话历史和本地分支；清理后如需继续此工单，须先人工恢复原 worktree 目录。', 'Remove only clean worktrees of ended tickets whose commits exist on a remote branch. Modified, untracked and ignored files block cleanup. The workspace entry is removed; session history and local branches remain. Restore the original worktrees manually before resuming this ticket.'],
+  worktreeRemoved: ['目录和工作区条目已清理，会话历史及分支保留', 'Directory and workspace entry removed; history and branch retained'],
   // Shared
   title: ['Superagent', 'Superagent'],
   close: ['关闭', 'Close'],

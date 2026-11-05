@@ -261,3 +261,15 @@ it('sends one stop for a double click on Confirm', async () => {
   await act(async () => { confirm.click(); confirm.click() })
   expect(server.requests.filter(request => request.path === 'tickets/t1/stop')).toHaveLength(1)
 })
+
+it('confirms worktree cleanup and displays its result', async () => {
+  server.ticketDetails.t1 = { ...server.ticketDetails.t1!, canCleanupWorktrees: true }
+  at({ page: 'execution', id: 't1' })
+  await mount()
+  await click(zh.cleanupWorktrees)
+  expect(text()).toContain(zh.cleanupWorktreesConfirm)
+  expect(server.requests.some(request => request.path === 'tickets/t1/cleanup-worktrees')).toBe(false)
+  await click(zh.confirm)
+  expect(server.requests.filter(request => request.path === 'tickets/t1/cleanup-worktrees')).toHaveLength(1)
+  expect(text()).toContain(zh.worktreeRemoved)
+})

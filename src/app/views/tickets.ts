@@ -74,6 +74,7 @@ export function ticketDetail(host: ViewHost, id: string) {
   return { ...ticketLine(view, ticket), mandate: { ...ticket.mandate, actor: view.actor(ticket.mandate.actor, human) },
     basis: basisFacts(ticket.mandate.basis, view.rule), paused: store.settings().paused,
     ...(ticket.execution?.repositories ? { repositories: ticket.execution.repositories.map(({ id, url, provider }) => ({ id, url, provider })) } : {}),
+    canCleanupWorktrees: !!ticket.ended && !!ticket.execution?.prepared && !!ticket.execution.repositories?.some(repo => repo.worktree),
     channels: ticket.channels.map(channel => channelLink(view, channel)),
     decision: decision ? decisionView(view, decision) : undefined,
     // Every started Assignment ran in the ticket's one worker Session. A running assignment whose worker reported a non-progress state has finished its turn unless a human response resumed the ticket.

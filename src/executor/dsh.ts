@@ -11,7 +11,7 @@ import type { Machine } from '../deployment.ts'
 import { runAsWorker, verifyDirectory } from '../infra/environment.ts'
 import type { Settings } from '../policy.ts'
 import { selectRepositories } from '../repositories.ts'
-import { prepareWorktree, worktreeExecution } from './worktrees.ts'
+import { prepareWorktree, removeWorktree, worktreeExecution } from './worktrees.ts'
 import type { Store } from '../app/store.ts'
 import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
@@ -19,7 +19,7 @@ import type { Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
-import { cancelled, collectJob, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
+import { cancelled, collectJob, hasLiveChildren, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
 const now = (): string => new Date().toISOString()
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
@@ -429,6 +429,43 @@ export class DshExecutor implements Executor {
     }
     await until(stop(), undefined, SHUTDOWN_STOP_MS)
   }
+  private readonly cleaning = new Set<string>()
+  async cleanupWorktrees(id: string): Promise<{ repository: string; removed: boolean; reason?: string }[]> {
+    if (this.cleaning.has(id)) throw new Error('该工单正在清理，请稍后再试。')
+    const ticket = this.host.store.tickets.get(id)
+    if (!ticket?.ended || !ticket.execution?.prepared) throw new Error('只能清理已结束且已准备工作目录的工单。')
+    const execution = ticket.execution
+    const assertIdle = async () => {
+      if (await hasLiveChildren(this.host.context, workerSessionId(id))) throw new Error('子会话尚未释放，不能清理。')
+      const current = this.host.store.tickets.get(id)
+      const agent = this.host.context.agents.get(workerSessionId(id) as SessionId)
+      if (!current?.ended || (agent && agent.status !== 'idle') || this.settling.has(id)
+        || runningJobs(this.host.context, workerSessionId(id)).length)
+        throw new Error('工单或会话仍在运行，不能清理。')
+    }
+    this.cleaning.add(id)
+    const task = (async () => {
+      await this.stopped(id)
+      await assertIdle()
+      const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
+      const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
+      const results: { repository: string; removed: boolean; reason?: string }[] = []
+      for (const repo of execution.repositories ?? []) {
+        if (!repo.worktree) continue
+        try {
+          const directory = await removeWorktree(repo, execution.name,
+            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env), assertIdle)
+          await assertIdle()
+          const workspace = this.host.context.workspaceRegistry.list().find(item => item.path === directory)
+          if (workspace) await this.host.context.workspaceRegistry.delete(workspace.id)
+          results.push({ repository: repo.id, removed: true })
+        } catch (error) { results.push({ repository: repo.id, removed: false, reason: String(error) }) }
+      }
+      return results
+    })()
+    this.track(id, task.then(() => {}))
+    try { return await task } finally { this.cleaning.delete(id) }
+  }
   /** Number of open tickets whose worker holds a worker slot: its turn runs, or its shell jobs or subagents still run after its turn ended. */
   activeCount(): number { return this.host.store.tickets.open().filter(ticket => this.running(ticket)).length }
   /** Whether a ticket's worker holds a worker slot: its turn runs, or its shell jobs or subagents do after its turn ended. */
@@ -451,6 +488,7 @@ export class DshExecutor implements Executor {
   }
   private relay({ id, text }: { id: string; text: string }): void { this.host.sessions.relay(id, text) }
   private async launch(ticket: Ticket, assignment: Assignment): Promise<void> {
+    if (this.cleaning.has(ticket.id)) await this.stopped(ticket.id)
     const current = () => {
       if (this.host.closing()) throw new Error('dsh-superagent is stopping')
       if (this.host.paused()) throw new Later('Processing is paused')

@@ -96,3 +96,12 @@ it('answers a prompt save that lost a race with 409, and a settings body over 12
     body: { error: `Request exceeds ${128 * 1024} bytes` } })
   expect(saves).toEqual([])
 })
+
+it('routes cleanup only after resolving the ticket', async () => {
+  const ids: string[] = []
+  const call = serve({ store: { tickets: { get: (id: string) => id === 't1' ? { id } : undefined } },
+    executor: { cleanupWorktrees: async (id: string) => { ids.push(id); return [{ repository: 'repo', removed: true }] } } })
+  expect((await call('POST', 'tickets/missing/cleanup-worktrees')).status).toBe(404)
+  expect((await call('POST', 'tickets/t1/cleanup-worktrees')).body).toEqual([{ repository: 'repo', removed: true }])
+  expect(ids).toEqual(['t1'])
+})

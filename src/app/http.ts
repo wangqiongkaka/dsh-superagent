@@ -37,7 +37,7 @@ export interface HttpHost {
   readonly sessions: Pick<Sessions, 'status' | 'notify' | 'delivery' | 'models'>
   readonly settings: Pick<Settings, 'view' | 'save' | 'pause' | 'sync' | 'refreshLabels'>
   readonly engine: EngineForPeople
-  readonly executor: Pick<DshExecutor, 'activeCount'>
+  readonly executor: Pick<DshExecutor, 'activeCount' | 'cleanupWorktrees'>
   readonly health: Record<string, Health>
   readonly machine: Machine
   readonly masterId: string
@@ -191,6 +191,7 @@ function routes(runtime: HttpHost): Routes {
     },
     'GET tickets/:id': ({ params }) => ticketPage(runtime, params.id),
     'POST tickets/:id/retry': ({ params }) => { const id = ticket(params.id); runtime.engine.retryTicket(id); return { retried: true } },
+    'POST tickets/:id/cleanup-worktrees': ({ params }) => runtime.executor.cleanupWorktrees(ticket(params.id)),
     'POST tickets/:id/stop': ({ params }) => { const id = ticket(params.id); runtime.engine.stopTicket(id); return { stopped: true } },
     'POST executor/pause': async ({ body }) => runtime.settings.pause(z.object({ paused: z.boolean() }).parse(await body()).paused, 'panel'),
     'PUT settings/:block': async ({ params, body }) => {

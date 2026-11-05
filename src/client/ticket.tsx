@@ -107,6 +107,7 @@ function MandateDetails({ ticket, actor }: { ticket: TicketPageView; actor: stri
 
 export function TicketPage({ id }: { id: string }) {
   const { t, call } = usePanel()
+  const [cleanup, setCleanup] = useState<{ repository: string; removed: boolean; reason?: string }[]>([])
   const { data, error, reload } = usePoll(() => call('GET tickets/:id', { id }), [id])
   const after = async (request: Promise<unknown>) => { await request; await reload() }
   if (!data) return <><PageHead
@@ -190,6 +191,15 @@ export function TicketPage({ id }: { id: string }) {
             className="dt-mono dt-clamp">{data.mandate.scope}</span>] as [string, ReactNode]] : []]} />
       </Details>
     </div>
+    {data.canCleanupWorktrees && <div className="dt-danger-zone">
+      <ConfirmButton variant="outline" label={t('cleanupWorktrees')} title={t('cleanupWorktrees')}
+        message={t('cleanupWorktreesConfirm')} onConfirm={async () => {
+          setCleanup(await call('POST tickets/:id/cleanup-worktrees', { id })); await reload()
+        }} />
+    </div>}
+    {cleanup.map(item => <p key={item.repository} className={item.removed ? 'dt-hint' : 'dt-error'}>
+      {item.repository}：{item.removed ? t('worktreeRemoved') : item.reason}
+    </p>)}
     {data.actions.stop && <div className="dt-danger-zone">
       <span className="dt-hint">{t('stopHint')}</span>
       <ConfirmButton variant="outline" label={t('stop')} title={t('stopConfirmTitle')} message={t('stopConfirm', { title: data.title })}

@@ -205,7 +205,7 @@ export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ 
   reason: [{ code: 'explicitRouted' }], at: '2026-09-22T00:00:00Z', strength: 'explicit', ticketId: undefined,
   triggerIds: ['e1'], thread: 'feishu:oc_1:om_root', rules: [], preview: '@bot 修一下', ticketTitle: undefined })
 const ticketDetail = (): TicketPageView => ({
-  ...ticketSummary(), paused: false, decision: acceptDecision(), threads: [threadSummary()],
+  ...ticketSummary(), paused: false, canCleanupWorktrees: false, decision: acceptDecision(), threads: [threadSummary()],
   mandate: { strength: 'explicit', policyVersion: 'abcdef1234567890', basis: { via: 'addressed', sender: 'Alice', addressed: 'mention' },
     actor: actor('feishu', MEMBER), scope: '修复登录页回归' },
   basis: { facts: [{ name: 'sender', value: 'Alice' }, { name: 'addressed', value: 'mention' }], legacy: false },
@@ -333,6 +333,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     return ticket.actions.retry ? { retried: true } : refuse(400, 'Only an open ticket can be retried, and only when its worker last reported failed or blocked and no person has sent a message since, or when delivering an Input to its worker failed',
       { code: 'notRetryable', values: {} })
   } },
+  'POST tickets/:id/cleanup-worktrees': { answer: () => [{ repository: 'example', removed: true }] },
   'POST tickets/:id/stop': { answer: ({ params }) => {
     if (!ticketOf(params.id)) return refuse(404, 'Ticket not found')
     server.tickets.open = []; server.person = server.person.filter(ticket => ticket.id !== params.id)

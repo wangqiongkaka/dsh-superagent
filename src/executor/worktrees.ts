@@ -101,3 +101,56 @@ export async function prepareWorktree(repo: Checkout, name: string, defaultBranc
     await verify(directory)
   } finally { await release() }
 }
+
+/** Removes only a clean, published worktree owned by this ticket; never removes its branch. */
+export async function removeWorktree(repo: Checkout, name: string, run: GitRun, assertIdle: () => void | Promise<void>): Promise<string> {
+  const { base, directory } = repo.worktree!
+  const git = async (args: string[], cwd = base) => (await run(['git', ...args], cwd)).trim()
+  const common = await realpath(await git(['rev-parse', '--path-format=absolute', '--git-common-dir']))
+  const release = await lock(common, { lockfilePath: join(common, 'dsh-superagent-worktree.lock'), stale: 120_000, update: 10_000,
+    retries: 0 })
+  try {
+    await assertIdle()
+    const entry = await lstat(directory).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined
+      throw error
+    })
+    if (!entry) {
+      const source = await realpath(base)
+      const target = join(await realpath(dirname(directory)), basename(directory))
+      if (source === target || contains(source, target)
+        || await realpath(await git(['rev-parse', '--show-toplevel'])) !== source
+        || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-dir'])) !== common
+        || remoteUrl(await git(['remote', 'get-url', 'origin'])) !== repo.url)
+        throw new Error('仓库归属不一致，工作区登记已保留。')
+      await git(['show-ref', '--verify', `refs/heads/agent/${name}`])
+      const registered = (await git(['worktree', 'list', '--porcelain', '-z'])).split('\0').includes(`worktree ${target}`)
+      if (registered) throw new Error('目录已丢失但 Git 登记仍存在，请先修复该 worktree。')
+      await assertIdle()
+      return target
+    }
+    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error('目录不是普通 worktree，已保留。')
+    const source = await realpath(base), target = await realpath(directory)
+    if (source === target || contains(source, target)
+      || await realpath(await git(['rev-parse', '--show-toplevel'])) !== source
+      || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-dir'])) !== common
+      || await realpath(await git(['rev-parse', '--show-toplevel'], target)) !== target
+      || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-common-dir'], target)) !== common
+      || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-dir'], target)) === common
+      || await git(['symbolic-ref', '--quiet', 'HEAD'], target) !== `refs/heads/agent/${name}`
+      || remoteUrl(await git(['remote', 'get-url', 'origin'])) !== repo.url)
+      throw new Error('仓库或分支不属于该工单，已保留。')
+    if (await git(['status', '--porcelain', '--untracked-files=all', '--ignored'], target))
+      throw new Error('存在修改、未跟踪或忽略的文件，已保留。请先保存或自行清理。')
+    const head = await git(['rev-parse', 'HEAD'], target)
+    await git(['fetch', '--prune', '--no-tags', '--', `${repo.url}.git`, '+refs/heads/*:refs/remotes/origin/*'])
+    if (!await git(['for-each-ref', '--format=%(refname)', '--contains', head, 'refs/remotes/origin/']))
+      throw new Error('当前提交尚未包含在远端分支中，已保留。')
+    await assertIdle()
+    if (await git(['rev-parse', 'HEAD'], target) !== head
+      || await git(['status', '--porcelain', '--untracked-files=all', '--ignored'], target))
+      throw new Error('检查期间目录发生变化，已保留。')
+    await git(['worktree', 'remove', '--', directory])
+    return target
+  } finally { await release() }
+}

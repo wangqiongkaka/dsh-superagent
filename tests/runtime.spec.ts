@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as worktrees from '../src/executor/worktrees.ts'
 import { Runtime } from '../src/app/runtime.ts'
 import { jobRegistry, receiveAndRoute } from './fixtures/host.ts'
 import { evalsHealth } from '../src/app/views/overview.ts'
@@ -1828,4 +1829,41 @@ it('keeps the Policy the main Session judges by in its prompt, after admission a
   await runtime.settings.save('policy', { ...saved.policy, rules: rules.map(rule => ({ ...rule, enabled: false })) }, runtime.store.blockRevision('policy'), 'panel')
   expect(policy()).toContain('没有启用规则：主动候选只能忽略。')
   expect(policy()).toContain('接单模式和规则仅决定主动候选')
+})
+
+it('rejects cleanup of open tickets and ended tickets with a running session', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  await expect(runtime.executor.cleanupWorktrees(ticket.id)).rejects.toThrow('只能清理')
+  const stored = runtime.store.tickets.get(ticket.id)!
+  runtime.store.tickets.save({ ...stored, ended: { at: new Date().toISOString(), by: 'human', outcome: 'stopped' },
+    execution: { ...stored.execution!, prepared: true } })
+  await vi.waitFor(() => expect(agents.has(sessionId)).toBe(true))
+  agents.get(sessionId)!.status = 'running'
+  await expect(runtime.executor.cleanupWorktrees(ticket.id)).rejects.toThrow('仍在运行')
+})
+
+
+it('removes only the cleaned workspace registration and permits retry after registration deletion fails', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  runtime.engine.stopTicket(ticket.id)
+  await vi.waitFor(() => expect(agents.has(sessionId)).toBe(true))
+  agents.get(sessionId)!.status = 'idle'
+  const stored = runtime.store.tickets.get(ticket.id)!
+  runtime.store.tickets.save({ ...stored, execution: { ...stored.execution!, prepared: true,
+    repositories: [{ id: 'service', provider: 'github', url: 'https://github.com/acme/service', cli: AGENT(),
+      worktree: { base: '/base', directory: '/work/task' } }] } })
+  const remove = vi.spyOn(worktrees, 'removeWorktree').mockResolvedValue('/work/task')
+  const deleteWorkspace = vi.fn().mockRejectedValueOnce(new Error('registry unavailable')).mockResolvedValue(true)
+  Object.assign(services.workspaceRegistry as object, {
+    list: () => [{ id: 'base', path: '/base' }, { id: 'task', path: '/work/task' }, { id: 'other', path: '/work/other' }],
+    delete: deleteWorkspace,
+  })
+  expect(await runtime.executor.cleanupWorktrees(ticket.id)).toEqual([
+    { repository: 'service', removed: false, reason: 'Error: registry unavailable' },
+  ])
+  expect(await runtime.executor.cleanupWorktrees(ticket.id)).toEqual([{ repository: 'service', removed: true }])
+  expect(deleteWorkspace.mock.calls).toEqual([['task'], ['task']])
+  remove.mockRejectedValueOnce(new Error('dirty'))
+  expect((await runtime.executor.cleanupWorktrees(ticket.id))[0]!.removed).toBe(false)
+  expect(deleteWorkspace).toHaveBeenCalledTimes(2)
 })

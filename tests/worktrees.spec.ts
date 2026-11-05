@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { prepareWorktree, worktreeExecution } from '../src/executor/worktrees.ts'
+import { prepareWorktree, removeWorktree, worktreeExecution } from '../src/executor/worktrees.ts'
 import { RepositorySchema, validateRepositoryBindings } from '../src/repositories.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { feishu } from './fixtures/host.ts'
@@ -196,4 +196,60 @@ it('rejects invalid paths and keeps unconfigured workspaces on the legacy clone 
   expect(RepositorySchema.safeParse({ ...repo, workspaceParent: '../relative' }).success).toBe(false)
   const execution = { name: 'task', directory: '/legacy', assignment: '' }
   expect(worktreeExecution(execution, [repo], SettingsSchema.parse({}), feishu('1', 'work'))).toEqual({ ...execution, repositories: [repo] })
+})
+
+
+it('removes a clean published worktree and retains the branch and base checkout', async () => {
+  const item = checkout()
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  await removeWorktree(item, 'task-one', run, () => {})
+  expect(await git(base, 'branch', '--list', 'agent/task-one')).toContain('agent/task-one')
+  expect(await readFile(join(base, 'file.txt'), 'utf8')).toBe('initial')
+  await expect(readFile(join(item.worktree.directory, 'file.txt'))).rejects.toThrow()
+})
+
+it.each(['modified', 'untracked', 'ignored', 'unpublished', 'wrong-branch', 'active'])('preserves a %s worktree', async mode => {
+  const item = checkout(), dir = item.worktree.directory
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  if (mode === 'modified') await writeFile(join(dir, 'file.txt'), 'unfinished')
+  if (mode === 'untracked') await writeFile(join(dir, 'notes.txt'), 'unsaved')
+  if (mode === 'ignored') {
+    await writeFile(join(base, '.git', 'info', 'exclude'), 'secret.txt\n')
+    await writeFile(join(dir, 'secret.txt'), 'private')
+  }
+  if (mode === 'unpublished') {
+    await writeFile(join(dir, 'file.txt'), 'new commit')
+    await git(dir, 'add', '.'); await git(dir, 'commit', '-m', 'unpublished')
+  }
+  if (mode === 'wrong-branch') await git(dir, 'switch', '-c', 'other')
+  await expect(removeWorktree(item, 'task-one', run, () => { if (mode === 'active') throw new Error('active') })).rejects.toThrow()
+  expect(await readFile(join(dir, 'file.txt'), 'utf8')).toBeTruthy()
+  expect(run.mock.calls.some(([args]) => args[1] === 'worktree' && args[2] === 'remove')).toBe(false)
+})
+
+it('preserves a worktree if the ticket resumes during remote verification', async () => {
+  const item = checkout()
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  let checks = 0
+  await expect(removeWorktree(item, 'task-one', run, () => {
+    if (++checks === 2) throw new Error('resumed')
+  })).rejects.toThrow('resumed')
+  expect(await readFile(join(item.worktree.directory, 'file.txt'), 'utf8')).toBe('initial')
+})
+
+it('never removes a symlink or a main checkout', async () => {
+  const link = join(root, 'link')
+  await symlink(base, link)
+  for (const directory of [link, base]) {
+    await expect(removeWorktree({ ...repo, worktree: { base, directory } }, 'task-one', run, () => {})).rejects.toThrow()
+  }
+  expect(await readFile(join(base, 'file.txt'), 'utf8')).toBe('initial')
+})
+
+it('returns the canonical path on repeated cleanup without removing another worktree', async () => {
+  const item = checkout()
+  await prepareWorktree(item, 'task-one', 'main', run, verify, true)
+  const directory = await removeWorktree(item, 'task-one', run, () => {})
+  expect(await removeWorktree(item, 'task-one', run, () => {})).toBe(directory)
+  expect(await git(base, 'branch', '--list', 'agent/task-one')).toContain('agent/task-one')
 })

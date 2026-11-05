@@ -163,3 +163,9 @@ export async function stopBackground(ctx: Context, sessionId: string, reason: st
   if (agent) await stopSubagents(ctx, agent, keepInbox).catch((error: unknown) => { failures.push(error) })
   if (failures.length) throw new AggregateError(failures, `Stopping the background work of ${sessionId} failed`)
 }
+
+/** A loaded child session still owns a workspace even while its turn is idle. */
+export async function hasLiveChildren(ctx: Context, sessionId: string): Promise<boolean> {
+  const children = await subagentsOf(ctx)?.listChildren(sessionId) ?? []
+  return children.some(child => !!ctx.agents.get(child.id as SessionId))
+}
