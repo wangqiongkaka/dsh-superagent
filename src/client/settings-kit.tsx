@@ -171,6 +171,8 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
 }) {
   const { t, notify } = usePanel()
   const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState(0)
+  const tabbed = field.key === 'chats'
   const refresh = useAction(async () => {
     try {
       const added = await refreshLabels!()
@@ -179,7 +181,8 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
   })
   const label = localized(t, field.label), hint = localized(t, field.hint)
   const rows = Array.isArray(value) ? value as Row[] : []
-  const collapsible = field.collapsed || rows.length > ROWS_SHOWN
+  const collapsible = !tabbed && (field.collapsed || rows.length > ROWS_SHOWN)
+  const active = Math.min(selected, Math.max(0, rows.length - 1))
   const set = (index: number, row: Row) => onChange(rows.map((item, position) => position === index ? row : item))
   const key = field.columns[0]!
   const savedKeys = new Set((Array.isArray(saved) ? saved as Row[] : []).map(row => row[key.key]))
@@ -221,22 +224,26 @@ function RowsField({ field, value, saved, onChange, labels, refreshLabels }: {
         {key.type === 'text' && key.refresh && refreshLabels && <Button variant="ghost" size="sm" className={refresh.busy ? 'dt-btn-busy'
           : undefined} icon={<Icon name="refresh" />}
           disabled={refresh.busy} aria-busy={refresh.busy} onClick={() => { void refresh.run() }}>{localized(t, key.refresh)}</Button>}
-        <Button variant="ghost" size="sm" icon={<Icon name="plus" />} onClick={() => { setOpen(true); onChange([...rows,
+        <Button variant="ghost" size="sm" icon={<Icon name="plus" />} onClick={() => { setOpen(true); setSelected(rows.length); onChange([...rows,
           blank]) }}>{t('addRow')}</Button>
       </span>
     </div>
+    {tabbed && rows.length > 0 && <div className="dt-subtabs dt-chat-tabs" role="tablist" aria-label={label}>
+      {rows.map((row, index) => <button key={index} type="button" role="tab" className="dt-subtab"
+        aria-selected={index === active} onClick={() => setSelected(index)}>{rowName(row) || t('addRow')}</button>)}
+    </div>}
     {rows.length > 0 && collapsible && <button type="button" className="dt-textlink dt-rows-summary" aria-expanded={open}
       onClick={() => setOpen(!open)}>
       {open ? t('collapse') : rows.map(rowName).join(t('listSeparator')) || label}
     </button>}
     {(!collapsible || open) && <ul className="dt-rows"
-      style={{ ['--dt-columns' as string]: field.columns.length }}>{rows.map((row, index) => <li key={index} className={field.columns.length > 2 ? 'dt-rows-item dt-rows-expanded' : 'dt-rows-item'}>
+      style={{ ['--dt-columns' as string]: field.columns.length }}>{rows.map((row, index) => <li key={index} hidden={tabbed && index !== active} onInvalidCapture={() => { if (tabbed) setSelected(index) }} className={field.columns.length > 2 ? 'dt-rows-item dt-rows-expanded' : 'dt-rows-item'}>
       {field.columns.map(column => field.columns.length > 2 ? <div className="dt-row-cell" key={column.key}>
         <span className="dt-hint">{localized(t, column.label)}</span>{cell(row, index, column)}
       </div> : cell(row, index, column))}
       <Button variant="ghost" size="sm" icon={<Icon name="trash" />} aria-label={t('removeRow', { name: labels[row[key.key] ?? '']
         || row[key.key] || label })}
-        onClick={() => onChange(rows.filter((_, position) => position !== index))} />
+        onClick={() => { if (tabbed) setSelected(index < active ? active - 1 : active); onChange(rows.filter((_, position) => position !== index)) }} />
     </li>)}</ul>}
   </div>
 }

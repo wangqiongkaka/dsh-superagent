@@ -87,7 +87,7 @@ function SourcePart({ source, part, saved, dirty, onChange, reload }: {
       {sync.health?.state === 'ready' && sync.health.at && <LabelValue label={t('syncDone')} value={when(sync.health.at, t('lang'))} />}
       {sync.health?.state === 'error' && <span className="dt-error dt-clamp">{sync.health.detail}</span>}
     </div>}
-    {policy.rows ? <AdmissionTable rows={policy.rows} labels={source.labels} table={(part.admission ?? {}) as AdmissionTable}
+    {policy.rows ? <AdmissionTable rows={policy.rows.filter(row => source.kind !== 'feishu' || row.id !== 'direct')} labels={source.labels} table={(part.admission ?? {}) as AdmissionTable}
       explicit={localized(t, policy.explicit)}
       onChange={admission => onChange({ ...part, admission })} />
       : <div className="dt-field"><span className="dt-field-head">{t('explicitRequest')}</span><span>{localized(t,
@@ -141,7 +141,7 @@ function PolicyBlock() {
   const draft = useBlockDraft('policy', blocks.policy.value, blocks.policy.revision)
   const policy = draft.value
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const parts = sources.filter(source => source.installed && source.policy)
+  const parts = sources.filter(source => source.installed && source.policy && source.kind !== 'github')
   const [tab, setTab] = useState<string>()
   const current = parts.find(source => source.id === tab) ?? parts[0]
   const edit = (next: Partial<typeof policy>) => draft.edit({ ...policy, ...next })

@@ -16,14 +16,16 @@ it('hides disabled legacy settings and labels enabled legacy settings', async ()
   expect(document.querySelector('#dt-source-github')).toBeNull()
   expect(document.querySelector('#dt-source-feishu')).not.toBeNull()
 })
-it('saves independent group and direct-message repository bindings', async () => {
+it('hides direct-message settings and preserves them when saving group bindings', async () => {
+  Object.assign(server.settings.sources.feishu!.config, { directMessages: true, directRepositories: 'backend', directPrimaryRepository: 'backend' })
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
   await click('团队群')
   await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'idcrm,backend')
-  await type(field<HTMLInputElement>('私聊可用仓库'), 'backend')
+  expect(text()).not.toContain('私聊可用仓库')
+  expect(text()).not.toContain('私聊主仓库标识')
+  expect(text()).not.toContain('接收私聊')
   await type(field<HTMLInputElement>('主仓库标识（填写后启用 worktree）'), 'idcrm')
-  await type(field<HTMLInputElement>('私聊主仓库标识'), 'backend')
   const form = document.querySelector<HTMLFormElement>('#dt-source-feishu')!
   await act(async () => { form.requestSubmit() })
   await settle()
@@ -47,14 +49,14 @@ it('shows each Source\'s state on the Source status and opens its settings from 
   expect(all('.dt-card')[1]!.textContent).toContain('部署检查未通过：没有设置智能体的 GitHub CLI。')
 })
 
-it('folds more than six chats into a line of their names', async () => {
+it('shows every chat as a tab', async () => {
   const chats = Array.from({ length: 7 }, (_, n) => ({ chatId: n ? `oc_c${n}` : 'oc_team', listen: 'all' as const }))
   server.settings.sources.feishu = { ...server.settings.sources.feishu!, config: { ...server.settings.sources.feishu!.config, chats } }
   await mount()
   await click(zh['tab.source'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
-  const summary = all('.dt-card')[0]!.querySelector('.dt-rows-summary')!
-  expect(summary.textContent).toBe(['团队群', 'oc_c1', 'oc_c2', 'oc_c3', 'oc_c4', 'oc_c5', 'oc_c6'].join('、'))
+  const tabs = all('.dt-card')[0]!.querySelectorAll('.dt-chat-tabs [role=tab]')
+  expect([...tabs].map(tab => tab.textContent)).toEqual(['团队群', 'oc_c1', 'oc_c2', 'oc_c3', 'oc_c4', 'oc_c5', 'oc_c6'])
 })
 
 it('rereads the chats the bot has joined on request and says which are new, keeping unsaved edits', async () => {
@@ -98,12 +100,11 @@ it('renders each Source\'s settings from its kind\'s fields and saves one Source
   expect([...pick.options].map(option => option.textContent)).toEqual(['选择机器人已加入的群', '另一个群'])
   await type(pick, 'oc_other')
   await type(rows[1]!.querySelector('select[aria-label="接收"]')!, 'all')
-  await click('接收私聊')
   await act(async () => { feishu.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) }); await settle()
   expect(server.requests.find(request => request.path === 'settings/source:feishu')).toMatchObject({ method: 'PUT', body: { revision: 0,
     value: { enabled: true, config: { chats: [{ chatId: 'oc_team', listen: 'mentions' }, { chatId: 'oc_other', listen: 'all' }],
-      directMessages: false } } } })
-  expect(server.settings.sources.feishu!.config).toMatchObject({ directMessages: false })
+      directMessages: true } } } })
+  expect(server.settings.sources.feishu!.config).toMatchObject({ directMessages: true })
   const github = all('.dt-card')[1]!
   await click('运行来源：GitHub')
   server.revisions['source:github'] = 5
@@ -307,39 +308,35 @@ it('reads the settings again as soon as dsh-superagent answers after a save rest
   expect(field<HTMLInputElement>('智能体的 GitHub CLI').value).toBe('/opt/bin/gh-agent')
 })
 
-it.each([1, 6, 7])('collapses %i chats by default and retains edits when toggled', async count => {
+it.each([1, 6, 7])('switches between %i chat tabs while retaining edits', async count => {
   server.settings.sources.feishu!.config.chats = Array.from({ length: count }, (_, n) => ({
     chatId: n ? `oc_c${n}` : 'oc_team', listen: 'mentions',
   }))
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
-  const summary = () => document.querySelector<HTMLElement>('#dt-source-feishu .dt-rows-summary')!
-  expect(summary().getAttribute('aria-expanded')).toBe('false')
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
-  await click(summary())
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(count)
+  const tabs = () => all('#dt-source-feishu .dt-chat-tabs [role=tab]')
+  const visible = () => all('#dt-source-feishu .dt-rows-item:not([hidden])')
+  expect(tabs()).toHaveLength(count)
+  expect(visible()).toHaveLength(1)
   await type(field<HTMLInputElement>('仓库标识（逗号分隔）'), 'backend')
-  await click(summary())
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
-  await click(summary())
+  await click(tabs()[count - 1]!)
+  expect(tabs()[count - 1]!.getAttribute('aria-selected')).toBe('true')
+  expect(visible()).toHaveLength(1)
+  await click(tabs()[0]!)
   expect(field<HTMLInputElement>('仓库标识（逗号分隔）').value).toBe('backend')
   await remount()
-  expect(summary().getAttribute('aria-expanded')).toBe('false')
-  await click(summary())
   expect(field<HTMLInputElement>('仓库标识（逗号分隔）').value).toBe('backend')
 })
 
-it('adds a chat to an empty collapsed list and can collapse an unnamed draft', async () => {
-  server.settings.sources.feishu!.config.chats = []
+it('selects an added chat and returns to the previous chat after deletion', async () => {
   at({ page: 'settings', query: { group: 'source' } })
   await mount()
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(0)
   const form = document.querySelector('#dt-source-feishu')!
   await click([...form.querySelectorAll('button')].find(button => button.textContent === '添加')!)
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(1)
-  await click('收起')
-  const summary = form.querySelector<HTMLElement>('.dt-rows-summary')!
-  expect(summary.textContent).toBe('接收的群')
-  await click(summary)
-  expect(all('#dt-source-feishu .dt-rows-item')).toHaveLength(1)
+  const rows = form.querySelectorAll<HTMLElement>('.dt-rows-item')
+  expect(rows[0]!.hidden).toBe(true)
+  expect(rows[1]!.hidden).toBe(false)
+  await click(rows[1]!.querySelector('button')!)
+  expect(form.querySelectorAll('.dt-chat-tabs [role=tab]')).toHaveLength(1)
+  expect(form.querySelector<HTMLElement>('.dt-rows-item')!.hidden).toBe(false)
 })

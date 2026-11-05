@@ -34,7 +34,7 @@ it('keeps a Policy draft across remounts, and merges another save into it sender
   await mount()
   await click(zh['tab.eval'])
   await click(find(zh['tab.settings'], '.dt-status-head button'))
-  expect(all('.dt-subtab').map(tab => tab.textContent)).toEqual(['飞书', 'GitHub'])
+  expect(all('.dt-subtab').map(tab => tab.textContent)).toEqual([])
   await addUser()
   expect(text()).toContain(zh.draftKept)
   await remount()
@@ -65,11 +65,8 @@ it('keeps the Policy to its rules and each Source\'s part, in that Source\'s own
   for (const gone of ['自动合并', '行数阈值', '成员', '计入策略版本']) expect(text()).not.toContain(gone)
   expect(all('.dt-lv').map(item => item.textContent)[0]).toBe('策略版本 abcdef12')
   expect(text()).toContain('名单内的人 @ 机器人或私聊机器人，总是明确的请求')
-  await click(find(zh['source.github'], '.dt-subtab'))
-  expect(text()).toContain('能发起工作的 GitHub 账号')
-  expect(text()).toContain('名单里的账号在 Issue 或评论里 @ 智能体的账号。')
-  // A saved account shows as its id; only a row being added is a field.
-  expect(all('.dt-part .dt-rows-item .dt-row-label').map(label => label.textContent)).toEqual(['alice'])
+  expect(text()).not.toContain('能发起工作的 GitHub 账号')
+  expect(all('.dt-subtab').some(item => item.textContent === 'GitHub')).toBe(false)
 })
 
 it('opens the rule list for an invalid field inside it only', async () => {
@@ -144,7 +141,7 @@ it('sets the Feishu admission table per receiving scope, offering only the cells
   const rows = all('.dt-admission tbody tr').map(row => [row.querySelector('.dt-admission-scope')!.firstChild?.textContent,
     row.querySelectorAll('select').length])
   // Chats receiving every message have all three cells; @-only chats only the mention cell; other chats nothing while not received.
-  expect(rows).toEqual([['团队群', 3], ['另一个群', 1], ['其他群', 0], ['私聊', 1]])
+  expect(rows).toEqual([['团队群', 3], ['另一个群', 1], ['其他群', 0]])
   expect(all('.dt-admission thead th').map(cell => [cell.getAttribute('scope'), cell.textContent])).toEqual([
     ['col', '接收范围'], ['col', '名单内未 @'], ['col', '名单外点名智能体'], ['col', '名单外未 @'],
   ])
@@ -153,14 +150,14 @@ it('sets the Feishu admission table per receiving scope, offering only the cells
   await type(cell, 'explicit')
   // The warning is an icon in a slot every cell reserves, with the text on hover, so the table does not move.
   expect(document.querySelector('.dt-admission .dt-info-warn')?.getAttribute('aria-label')).toBe(zh.admissionAnyoneWarning)
-  expect(all('.dt-admission-slot')).toHaveLength(5)
+  expect(all('.dt-admission-slot')).toHaveLength(4)
   // A message not addressed to the bot cannot be an explicit request.
   expect([...field<HTMLSelectElement>('团队群 · 名单外 · 未 @').options].map(option => option.value)).toEqual(['inferred', 'ignore'])
   await click(zh.save)
   expect(server.settings.policy.sources.feishu!.admission).toEqual({ oc_team: { unlistedAddressed: 'explicit' } })
 })
 
-it('lists each Source\'s bots next to its people and saves them, and sets the GitHub admission table by its receiving scopes', async () => {
+it('saves Feishu bots while preserving the hidden GitHub policy', async () => {
   await mount()
   await click(tab(zh['tab.settings']))
   // The GitHub Source receives only what is addressed to the agent until a switch opens a scope of the repository.
@@ -180,20 +177,13 @@ it('lists each Source\'s bots next to its people and saves them, and sets the Gi
   const bot = await add('消息可以成为候选的机器人')
   await type(bot.querySelector<HTMLInputElement>('input[aria-label="App ID 或 open_id"]')!, 'cli_reviewer')
   await type(bot.querySelector<HTMLInputElement>('input[aria-label="名字"]')!, '评审机器人')
-  await click(find(zh['source.github'], '.dt-subtab'))
-  expect(lists()).toEqual(['能发起工作的 GitHub 账号', '评论可以成为候选的机器人'])
-  await type((await add('评论可以成为候选的机器人')).querySelector<HTMLInputElement>('input[aria-label="账号"]')!, 'dependabot[bot]')
-  // Until the GitHub Source receives the repository's Issues, pull requests, comments or CI, only messages that mention the agent arrive.
-  const rows = () => all('.dt-admission tbody tr').map(row => [row.querySelector('.dt-admission-scope')!.firstChild?.textContent,
-    row.querySelector('.dt-admission-scope small')?.textContent, row.querySelectorAll('select').length])
-  expect(rows()).toEqual([['新 Issue', '仅 @', 1], ['新 PR', '仅 @', 1], ['评论', '仅 @', 1], ['默认分支的 CI', '不接收', 0]])
-  expect(field<HTMLSelectElement>('新 Issue · 名单外 · 点名智能体').value).toBe('ignore')
+  const githubPolicy = structuredClone(server.settings.policy.sources.github)
   await click(zh.save)
   expect(server.settings.policy.sources.feishu!.bots).toEqual([{ id: 'cli_reviewer', name: '评审机器人' }])
-  expect(server.settings.policy.sources.github!.bots).toEqual([{ id: 'dependabot[bot]' }])
+  expect(server.settings.policy.sources.github).toEqual(githubPolicy)
 })
 
-it('shows the GitHub Source\'s switches for what it receives across the repository, and the admission rows they open, in English', async () => {
+it('keeps GitHub source switches available while hiding its policy tab in English', async () => {
   server.settings.sources.github = { ...server.settings.sources.github!, config: { ...server.settings.sources.github!.config,
     observeIssues: true, observeCi: true } }
   await mount(en)
@@ -207,11 +197,6 @@ it('shows the GitHub Source\'s switches for what it receives across the reposito
   await act(async () => { github.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })) }); await settle()
   expect(server.settings.sources.github!.config).toMatchObject({ observeIssues: true, observeComments: true, observeCi: true })
   await click(find(en['term.eval'], '.dt-settings-link'))
-  await click(find(en['source.github'], '.dt-subtab'))
-  const rows = all('.dt-admission tbody tr').map(row => [row.querySelector('.dt-admission-scope')!.firstChild?.textContent,
-    row.querySelectorAll('select').length])
-  expect(rows).toEqual([['New Issues', 3], ['New pull requests', 1], ['Comments', 3], ['Default branch CI', 1]])
-  // CI has no sender: its one cell is that of a message off the list that does not mention the agent.
-  expect(field('Default branch CI · Not on the list · no mention')).toBeTruthy()
-  expect(all('.dt-admission thead th').map(cell => cell.textContent)).toContain(en.admissionUnlisted + en.admissionAddressed)
+  expect(all('.dt-subtab').some(item => item.textContent === 'GitHub')).toBe(false)
+  expect(text()).not.toContain('New Issues')
 })
