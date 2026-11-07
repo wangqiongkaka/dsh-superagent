@@ -6,6 +6,8 @@ import { SETUP_PROBLEMS } from '../setup.ts'
 import { HEALTH_TEXT } from '../sources/host.ts'
 
 const TEXT = {
+  'memory.remove': ['永久删除', 'Delete permanently'],
+  'memory.removeConfirm': ['将永久删除这条记忆的正文、来源引用及全部版本，无法恢复；同一候选不会再次自动保存。已进入会话的内容及原始消息不会被删除。', 'Permanently delete this memory, its evidence and all versions. This cannot be undone; the same candidate cannot be saved again. Existing session context and original messages remain.'],
   "settingsGroup.memory": ["记忆", "Memory"],
   "memory.enabled": ["启用共享记忆", "Enable shared memory"],
   "memory.explain": ["项目知识自动共享给关联同一仓库的群；沟通偏好仅在原群使用。启用后，候选正文、原文引用及相关记忆会发送至 TypeSafe，由 Jev 筛选。停用后停止自动读写，已有记录保留。", "Project knowledge is shared across groups linked to the same repository; group preferences stay in their group. Enabling sends candidates, evidence and related memories to TypeSafe for Jev screening. Disabling stops automatic reads and writes but retains records."],

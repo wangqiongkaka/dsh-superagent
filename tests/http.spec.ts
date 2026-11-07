@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
 import { Memories } from '../src/app/memory.ts'
+import { KV } from '../src/kv.ts'
 import { Store } from '../src/app/store.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
@@ -145,6 +146,14 @@ it('validates memory settings and filters, excludes credentials and reports revi
     expect(result.body.config).toMatchObject({ enabled: true, configured: true, revision: 1 })
     expect(JSON.stringify(result)).not.toContain('test-only-private')
     expect((await call('GET', 'memory?status=unknown')).status).toBe(400)
+    const scope = { id: 'test', kind: 'group' as const, label: 'test' }
+    store.set(KV.memory.entry('m'), { id: 'm', revision: 2, text: 'fact', scope, status: 'active', reason: 'manual',
+      source: { resource: 'trigger/a', quote: 'fact', at: '' }, createdAt: '', updatedAt: '' })
+    for (const body of [{}, { revision: 0 }, { revision: 2, extra: true }]) expect((await call('DELETE', 'memory/m', body)).status).toBe(400)
+    expect((await call('DELETE', 'memory/m', { revision: 1 })).status).toBe(409)
+    expect(await call('DELETE', 'memory/m', { revision: 2 })).toEqual({ status: 200, body: { deleted: true } })
+    expect((await call('GET', 'memory/m/history')).status).toBe(400)
+
     expect((await call('PUT', 'memory/config', { ...memory.config(), revision: 0 })).status).toBe(409)
     expect((await call('PUT', 'memory/config', { ...memory.config(), threshold: 2 })).status).toBe(400)
     expect((await call('PUT', 'memory/missing', { revision: 1, text: '', scope: 'x', status: 'active' })).status).toBe(400)

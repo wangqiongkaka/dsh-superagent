@@ -320,6 +320,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     server.memoryHistory[entry.id] = [updated, ...server.memoryHistory[entry.id] ?? [entry]]
     return updated
   } },
+  'DELETE memory/:id': { body: true, answer: ({ body, params }) => {
+    const entry = server.memory.items.find(item => item.id === params.id)
+    if (!entry) return refuse(404, '记忆不存在。')
+    if (entry.revision !== body.revision) return refuse(409, '记忆已被其他会话修改，请重新载入后再删除。')
+    server.memory.items = server.memory.items.filter(item => item.id !== params.id)
+    delete server.memoryHistory[params.id]
+    return { deleted: true }
+  } },
   'GET memory/:id/history': { answer: ({ params }) => server.memoryHistory[params.id] ?? [] },
   'GET state': { answer: stateView },
   'POST master/rebuild': { body: true, answer: ({ body }) => {
