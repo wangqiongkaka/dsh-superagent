@@ -15,7 +15,7 @@ const HttpUrl = z.string().url().refine(value => {
   const url = new URL(value); url.search = ''; url.hash = ''; return url.toString().replace(/\/+$/, '')
 })
 export const MemoryConfigSchema = z.object({ enabled: z.boolean().default(false),
-  hindsightUrl: HttpUrl.default('http://127.0.0.1:8888'), consoleUrl: HttpUrl.default('http://127.0.0.1:9999'),
+  hindsightUrl: HttpUrl.default('http://127.0.0.1:8888'), consoleUrl: HttpUrl.default('http://127.0.0.1:9999/orchestrator/hindsight'),
   revision: z.number().int().nonnegative().default(0) }).strict()
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>
 export interface MemoryScope { id: string; kind: 'project' | 'group'; label: string }

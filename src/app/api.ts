@@ -13,6 +13,7 @@ import type { TicketListView } from './views/tickets.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
+export const MEMORY_CONSOLE_PATH = '/orchestrator/hindsight'
 export type TicketFilter = typeof TICKET_FILTERS[number]
 export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }

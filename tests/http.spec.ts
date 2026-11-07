@@ -26,7 +26,7 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
     const sent = Object.fromEntries(Object.entries({ host: '127.0.0.1:3082', 'x-orchestrator-request': '1', ...headers }).filter(([,
       value]) => value !== undefined))
     const req = { method, url: `/orchestrator/api/${path}`, headers: sent, async *[Symbol.asyncIterator]() { yield* chunks } }
-    await handler(req, { writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
+    await handler(req, { setHeader: () => {}, writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
     return { status, body: JSON.parse(text) as Record<string, unknown> }
   }
 }
