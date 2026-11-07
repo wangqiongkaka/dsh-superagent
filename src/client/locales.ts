@@ -472,6 +472,7 @@ const TEXT = {
   modelInherit: ['继承 DSH 默认值', 'Inherit the DSH default'],
   modelEffortDefault: ['模型默认', 'Model default'],
   modelCatalogError: ['无法加载模型建议，仍可填写已知的服务商和模型：{error}', 'Model suggestions are unavailable; known Provider and Model names still work: {error}'],
+  modelProviderCatalogError: ['无法加载服务商列表，仍可保留当前服务商或继承默认值，并填写模型：{error}', 'Providers are unavailable; keep the current Provider or inherit the default and enter a Model: {error}'],
   historyIntro: ['每次保存记一条；改变策略版本的保存（接单规则、各来源上的策略、接单模式）通知进行中的工单。', 'Each save is one entry; saves that change the Policy version (rules, the Policy on each Source, accept mode) notify open Tickets.'],
   historyItem: ['第 {revision} 次保存 · {source}', 'Save {revision} · {source}'],
   historyPolicyChanged: ['生成策略版本 {version}', 'New Policy version {version}'],
