@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { OutboundMessage } from '../src/core/index.ts'
-import { Commands } from '../src/infra/commands.ts'
+import { CliError, Commands } from '../src/infra/commands.ts'
 import type { SourceKind } from '../src/sources/kind.ts'
 import { feishu, startRuntime, type Host } from './fixtures/host.ts'
 
@@ -39,4 +39,25 @@ it('keeps a message for a Source that is not installed waiting, and sends it onc
   // A message whose Source was not installed is tried again after 5 seconds.
   await at(5000)
   expect([h.runtime.outbox.status('waiting'), sent.map(message => message.id)]).toEqual(['sent', ['waiting']])
+})
+
+it('settles a failed reply and clears its alert when plain fallback succeeds, without sending it again', async () => {
+  const lark = vi.mocked(Commands.prototype.lark)
+  lark.mockRejectedValue(new CliError('internal error', 2200))
+  h.runtime.outbox.send({ id: 'thread-failed', channel: feishu('1', 'x').channel!, text: '已完成。', kind: 'reply' })
+  await h.runtime.sendReplies(); await at(5000); await at(15_000)
+  expect(h.runtime.outbox.status('thread-failed')).toBe('pending')
+  expect(h.runtime.health.reply?.state).toBe('error')
+  lark.mockClear()
+  lark.mockImplementation(async args => {
+    if (args.includes('--reply-in-thread')) throw new CliError('internal error', 2200)
+    return {}
+  })
+  await at(35_000)
+  expect(h.runtime.outbox.status('thread-failed')).toBe('sent')
+  expect(h.runtime.store.read.failingReplies()).toEqual([])
+  expect(h.runtime.health.reply).toMatchObject({ state: 'ready', detail: 'Nothing waiting' })
+  expect(lark).toHaveBeenCalledTimes(2)
+  await at(300_000)
+  expect(lark).toHaveBeenCalledTimes(2)
 })

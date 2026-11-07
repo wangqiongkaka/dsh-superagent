@@ -15,13 +15,20 @@ export const feishuChatLink = (brand: 'feishu' | 'lark', chatId: string): string
  */
 const gone = (error: unknown): boolean => error instanceof CliError && error.code !== undefined && (error.code === 230011
   || /withdrawn/i.test(error.message) || (Math.floor(error.code / 100) === 2300 && /not found/i.test(error.message)))
-/** Replies in the topic of the target message; Feishu keeps at most one reply per idempotency key (the outgoing message's `message.id`). */
+/** Prefers threaded replies, falling back to a plain quoted reply on Feishu error 2200 with the same idempotency key. */
 export async function sendFeishu(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'> {
   const messageId = message.channel.address.messageId
   if (!messageId) throw new Error('Missing Feishu reply target')
   const text = checkedImText(message.text)
-  const reply = ['im', '+messages-reply', '--message-id', messageId, '--markdown', text, '--reply-in-thread', '--idempotency-key', message.id]
-  try { await host.commands.lark(reply) }
+  const reply = ['im', '+messages-reply', '--message-id', messageId, '--idempotency-key', message.id]
+  try {
+    try { await host.commands.lark([...reply, '--markdown', text, '--reply-in-thread']) }
+    catch (error) {
+      // Some live messages reject thread creation with 2200 while a plain quoted reply succeeds.
+      if (!(error instanceof CliError) || error.code !== 2200) throw error
+      await host.commands.lark([...reply, '--text', text])
+    }
+  }
   catch (error) {
     if (gone(error)) return 'gone'
     throw error

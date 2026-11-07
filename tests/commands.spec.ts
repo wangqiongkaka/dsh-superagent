@@ -83,6 +83,35 @@ describe('Channels', () => {
     run.mockRejectedValueOnce(lark(99991400, 'rate limited'))
     await expect(send(value, feishu)).rejects.toThrow('rate limited (99991400)')
   })
+  it('falls back from Feishu thread error 2200 to a plain reply with the same target and idempotency key', async () => {
+    const value = commands()
+    const run = vi.spyOn(value, 'run').mockResolvedValueOnce(JSON.stringify({ ok: false, error: { code: 2200, message: 'internal error' } }))
+      .mockResolvedValueOnce('{"ok":true,"data":{}}')
+    expect(await send(value, feishu)).toBe('sent')
+    const base = ['im', '+messages-reply', '--message-id', 'om_1', '--idempotency-key', feishu.id]
+    expect(run.mock.calls.map(call => call[1])).toEqual([
+      [...base, '--markdown', feishu.text, '--reply-in-thread', '--as', 'bot', '--format', 'json'],
+      [...base, '--text', feishu.text, '--as', 'bot', '--format', 'json'],
+    ])
+  })
+  it('keeps a failed fallback queued, and recognizes a recalled target during fallback', async () => {
+    for (const code of [2200, 99991400, 230011]) {
+      const value = commands()
+      const run = vi.spyOn(value, 'run').mockRejectedValueOnce(lark(2200, 'internal error'))
+        .mockRejectedValueOnce(lark(code, 'fallback failed'))
+      if (code === 230011) expect(await send(value, feishu)).toBe('gone')
+      else await expect(send(value, feishu)).rejects.toMatchObject({ code })
+      expect(run).toHaveBeenCalledTimes(2)
+    }
+  })
+  it('does not use fallback for timeouts, rate limits, permissions or untyped errors', async () => {
+    for (const error of [lark(99991400, 'rate limited'), lark(232011, 'not in chat'),
+      new CliError('timed out'), new Error('internal error (2200)')]) {
+      const value = commands(), run = vi.spyOn(value, 'run').mockRejectedValue(error)
+      await expect(send(value, feishu)).rejects.toThrow()
+      expect(run).toHaveBeenCalledTimes(1)
+    }
+  })
   it('keep a Feishu reply whose command timed out for a retry, whatever its text says', async () => {
     const value = commands()
     const timedOut = { killed: true, signal: 'SIGTERM', code: null, stderr: '', message: 'Command failed: lark-bot --markdown withdrawn' }
