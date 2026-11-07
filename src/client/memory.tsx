@@ -1,9 +1,9 @@
 /** Shared memory settings and source-backed review, using explicit revision checks for every edit. */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ApiResponse } from '../app/api.ts'
 import type { MemoryEntry, MemoryScope } from '../app/memory.ts'
 import { usePoll } from './api.ts'
-import { Button, Input, Switch, Tag } from './controls.tsx'
+import { Button, Input, Modal, Switch, Tag } from './controls.tsx'
 import { useAction, usePanel } from './provider.tsx'
 import { Hint, LoadState, Section, When } from './widgets.tsx'
 
@@ -41,6 +41,13 @@ function Record({ entry, scopes, reload }: { entry: MemoryEntry; scopes: MemoryS
     await call('PUT memory/:id', { id: entry.id, body: { revision: value.revision, text: value.text, scope: value.scope.id, status } })
     setDraft(undefined); setHistory(undefined); await reload()
   })
+  const [removing, setRemoving] = useState<MemoryEntry>()
+  const remove = useAction(async () => {
+    if (!removing) return
+    await call('DELETE memory/:id', { id: removing.id, body: { revision: removing.revision } })
+    setRemoving(undefined); setHistory(undefined); await reload()
+  })
+  const close = () => { if (!remove.busy) setRemoving(undefined) }
   const versions = useAction(async () => setHistory(history ? undefined : await call('GET memory/:id/history', { id: entry.id })))
   return <article className="dt-card">
     <div className="dt-actions"><strong>{entry.scope.label}</strong><Tag>{t(`memory.${entry.scope.kind}`)}</Tag>
@@ -63,8 +70,16 @@ function Record({ entry, scopes, reload }: { entry: MemoryEntry; scopes: MemoryS
       {entry.status !== 'active' && <Button disabled={save.busy} onClick={() => void save.run(entry, 'active')}>{t('memory.activate')}</Button>}
       {entry.status === 'pending' && <Button disabled={save.busy} onClick={() => void save.run(entry, 'rejected')}>{t('memory.reject')}</Button>}
       {entry.status !== 'deleted' && <Button disabled={save.busy} onClick={() => void save.run(entry, 'deleted')}>{t('memory.delete')}</Button>}
+      <Button disabled={save.busy} onClick={() => setRemoving(entry)}>{t('memory.remove')}</Button>
       <Button disabled={versions.busy} aria-expanded={!!history} onClick={() => void versions.run()}>{t('memory.history')}</Button>
     </div>}
+    <Modal open={!!removing} onClose={close} title={t('memory.remove')} closeLabel={t('close')}
+      description={t('memory.removeConfirm')} footer={<>
+        <Button disabled={remove.busy} onClick={close}>{t('cancel')}</Button>
+        <Button variant="primary" disabled={remove.busy} onClick={() => void remove.run()}>{t('memory.remove')}</Button>
+      </>}>
+      <p className="dt-event-text">{removing?.text}</p>
+    </Modal>
     {history && <div className="dt-form">{history.map(version => <div key={version.revision}>
       <div className="dt-actions">v{version.revision} · {version.scope.label} · {t(`memory.${version.status}`)} <When at={version.updatedAt} /></div>
       <p className="dt-event-text">{version.text}</p></div>)}</div>}
@@ -74,6 +89,9 @@ export function MemoryPage() {
   const { call, t } = usePanel()
   const [scope, setScope] = useState(''), [status, setStatus] = useState(''), [offset, setOffset] = useState(0)
   const { data, error, reload } = usePoll(() => call('GET memory', { query: { scope, status, offset } }), [call, scope, status, offset])
+  useEffect(() => {
+    if (data && offset > 0 && !data.items.length) setOffset(Math.max(0, Math.ceil(data.total / 30) - 1) * 30)
+  }, [data, offset])
   if (!data) return <LoadState loading error={error} />
   return <div className="dt-form">
     <Configuration initial={data.config} reload={reload} />

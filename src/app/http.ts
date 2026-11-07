@@ -163,6 +163,7 @@ function routes(runtime: HttpHost): Routes {
     },
     'PUT memory/config': async ({ body }) => runtime.memory.configure(await body()),
     'PUT memory/:id': async ({ params, body }) => runtime.memory.edit(params.id, await body()),
+    'DELETE memory/:id': async ({ params, body }) => runtime.memory.remove(params.id, await body()),
     'GET memory/:id/history': ({ params }) => runtime.memory.history(params.id),
     'GET state': () => stateView(runtime),
     'POST master/rebuild': async ({ body }) => {

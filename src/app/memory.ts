@@ -108,6 +108,21 @@ export class Memories {
       return this.save({ ...current, text: edit.text, scope: scope ?? current.scope, status: edit.status, reason: 'manual' })
     })
   }
+  remove(id: string, input: unknown): { deleted: true } {
+    const { revision } = z.object({ revision: z.number().int().positive() }).strict().parse(input)
+    return this.store.atomic(() => {
+      const current = this.store.get(KV.memory.entry(id))
+      if (!current) {
+        if (this.store.get(KV.memory.purged(id)) === revision) return { deleted: true }
+        throw new MemoryError('记忆已被删除或不存在。')
+      }
+      if (current.revision !== revision) throw new MemoryConflict('记忆已被其他会话修改，请重新载入后再删除。')
+      this.store.set(KV.memory.purged(id), revision)
+      for (const name of this.store.keys(`${KV.memory.history.prefix}${id}:`)) this.store.delete(name)
+      this.store.delete(KV.memory.entry(id))
+      return { deleted: true }
+    })
+  }
   private async ask(state: unknown, questions: Record<string, Question>, signal?: AbortSignal) {
     const config = this.config(), credential = this.credential()
     if (!config.enabled || !credential) throw new MemoryError('记忆筛选未启用或尚未配置密钥。')
@@ -121,7 +136,8 @@ export class Memories {
     catch { throw new MemoryError('Jev 返回了无效的判断结果。') }
   }
   private candidate(id: string, triggerId?: string, ticketId?: string): MemoryEntry {
-    const entry = this.store.get(KV.memory.entry(id))!
+    const entry = this.store.get(KV.memory.entry(id))
+    if (!entry) throw new MemoryError('记忆已被删除或不存在。')
     if (!this.origin(triggerId, ticketId).scopes.some(scope => scope.id === entry.scope.id)) throw new MemoryError('记忆访问范围已变化。')
     return entry
   }
@@ -138,6 +154,7 @@ export class Memories {
     if (NO_SECRETS.test(proposal.text + '\n' + proposal.quote)) throw new MemoryError('请勿提交密钥或密码作为共享记忆。')
     const source = { resource: report ? `ticket/${ticket!.id}/report/${proposal.report_id}` : `trigger/${trigger.id}`, quote: proposal.quote, at: report ? report.at : trigger.at }
     const id = key('memory', source.resource, proposal.text, proposal.quote)
+    if (this.store.get(KV.memory.purged(id)) !== undefined) throw new MemoryError('这条候选已被永久删除，不会再次保存。')
     const previous = this.store.get(KV.memory.entry(id))
     if (previous) return this.candidate(id, proposal.trigger_id, ticketId)
     const pending: MemoryEntry = { id, revision: 0, text: proposal.text, scope: scopes.find(scope => scope.kind === 'group') ?? scopes[0]!,
@@ -181,7 +198,7 @@ export class Memories {
       }
       return this.store.atomic(() => {
         const current = this.store.get(KV.memory.entry(id))!
-        if (current.revision !== 1) return this.candidate(id, proposal.trigger_id, ticketId)
+        if (!current || current.revision !== 1) return this.candidate(id, proposal.trigger_id, ticketId)
         const latest = this.entries().filter(entry => entry.status === 'active' && entry.scope.id === scope.id)
         if (JSON.stringify(latest.map(entry => [entry.id, entry.revision])) !== snapshot || this.config().revision !== config.revision
           || !this.origin(proposal.trigger_id, ticketId).scopes.some(item => item.id === scope.id)) { status = 'pending'; reason = 'changed' }
