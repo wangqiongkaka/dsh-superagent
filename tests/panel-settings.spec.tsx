@@ -30,7 +30,7 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   await click(zh['mode.auto'])
   await type(field<HTMLInputElement>(zh.evalTimeout), '180')
   await type(field<HTMLSelectElement>(zh.modelProvider), 'worker-provider')
-  await type(field<HTMLInputElement>(zh.modelName), 'worker-model')
+  await type(field<HTMLSelectElement>(zh.modelName), 'worker-model')
   await click(zh.save)
   expect(server.settings.eval).toEqual({ mode: 'auto', timeoutSeconds: 180, model: { provider: 'worker-provider', model: 'worker-model' } })
   await click(find(zh['promptPart.runtime/work'], '.dt-settings-link'))
@@ -73,7 +73,7 @@ it('preserves an unavailable saved Eval provider and allows returning to the inh
   await click(zh.save)
   expect(server.settings.eval.model).toEqual({ provider: 'previous-provider', model: 'previous-model' })
   await type(provider, '')
-  await type(field<HTMLInputElement>(zh.modelName), '')
+  await type(field<HTMLSelectElement>(zh.modelName), '')
   await click(zh.save)
   expect(server.settings.eval.model).toBeNull()
 })
@@ -91,7 +91,7 @@ it('keeps the saved Eval provider visible when its catalog fails, without promis
   expect([...provider.options].map(option => option.value)).toEqual(['', 'previous-provider'])
   expect(document.querySelector('.dt-model .dt-error')?.textContent).toContain('无法加载服务商列表')
   await type(provider, '')
-  await type(field<HTMLInputElement>(zh.modelName), '')
+  await type(field<HTMLSelectElement>(zh.modelName), '')
   await click(zh.save)
   expect(server.settings.eval.model).toBeNull()
 })
@@ -180,4 +180,28 @@ it('lists the settings groups stages first, opens each stage\'s group from its s
   await remount()
   await click(tab(zh['tab.settings']))
   expect(document.querySelector('.dt-settings-link[aria-current="page"]')?.textContent).toBe(zh['promptPart.runtime/work'])
+})
+
+it('resets Eval model and reasoning on provider changes and offers only the selected model’s supported efforts', async () => {
+  server.models = { default: { provider: 'a', model: 'deep' }, routableProviders: [], failures: [], groups: [
+    { id: 'a', name: 'Provider A', models: [{ id: 'deep', name: 'Deep', reasoning: { efforts: [{ id: 'high', name: 'High' }] } }] },
+    { id: 'b', name: 'Provider B', models: [{ id: 'fast', name: 'Fast' }, { id: 'small', name: 'Small', reasoning: { efforts: [{ id: 'low', name: 'Low' }] } }] },
+  ] }
+  server.settings.eval.model = { provider: 'a', model: 'deep', reasoningEffort: 'high' }
+  await mount(); await click(zh['tab.eval']); await click(find(zh['tab.settings'], '.dt-status-head button'))
+  const provider = field<HTMLSelectElement>(zh.modelProvider), model = field<HTMLSelectElement>(zh.modelName), effort = field<HTMLSelectElement>(zh.modelEffort)
+  expect([provider.tagName, model.tagName, effort.tagName]).toEqual(['SELECT', 'SELECT', 'SELECT'])
+  expect(effort.value).toBe('high')
+  await type(provider, 'b')
+  expect(model.value).toBe(''); expect(model.validity.valueMissing).toBe(true); expect(effort.value).toBe('')
+  expect([...model.options].map(option => option.value)).toEqual(['', 'fast', 'small'])
+  expect(effort.disabled).toBe(true)
+  await type(model, 'small'); expect(effort.disabled).toBe(false)
+  expect([...effort.options].map(option => option.value)).toEqual(['', 'low'])
+  await type(effort, 'low'); await click(zh.save)
+  expect(server.settings.eval.model).toEqual({ provider: 'b', model: 'small', reasoningEffort: 'low' })
+  await type(model, 'fast'); expect(effort.value).toBe(''); expect(effort.disabled).toBe(true)
+  await click(zh.save); expect(server.settings.eval.model).toEqual({ provider: 'b', model: 'fast' })
+  await type(provider, ''); expect(model.value).toBe(''); expect(model.disabled).toBe(true)
+  await click(zh.save); expect(server.settings.eval.model).toBeNull()
 })

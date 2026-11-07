@@ -82,6 +82,7 @@ export function ModelField({ id, value, onChange, providerSelect = false }: {
     onChange(provider.trim() || model.trim() || effort.trim() ? { provider, model, ...effort ? { reasoningEffort: effort } : {} } : null)
   }
   const models = catalog?.groups.find(group => group.id === current.provider.trim())?.models ?? []
+  const efforts = models.find(model => model.id === current.model.trim())?.reasoning?.efforts ?? []
   const fallback = catalog?.default
   const input = (name: keyof typeof current, label: string, placeholder: string) => <Field label={label}>
     <Input list={`${id}-${name}s`} spellCheck={false} placeholder={placeholder} value={current[name]}
@@ -93,22 +94,40 @@ export function ModelField({ id, value, onChange, providerSelect = false }: {
     {error && <p className="dt-error">{t(providerSelect ? 'modelProviderCatalogError' : 'modelCatalogError', { error })}</p>}
     <div className="dt-grid3">
       {providerSelect ? <Field label={t('modelProvider')}>
-        <select className="dt-select" value={current.provider} onChange={event => set({ provider: event.target.value })}>
+        <select className="dt-select" value={current.provider} onChange={event => set({ provider: event.target.value, model: '', effort: '' })}>
           <option value="">{t('modelInherit')}</option>
           {current.provider && !catalog?.groups.some(group => group.id === current.provider) &&
             <option value={current.provider}>{current.provider}</option>}
           {catalog?.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
         </select>
-      </Field> : input('provider', t('modelProvider'), t('modelInherit'))}{input('model', t('modelName'), t('modelInherit'))}{input('effort',
-        t('modelEffort'), t('modelEffortDefault'))}
+      </Field> : input('provider', t('modelProvider'), t('modelInherit'))}
+      {providerSelect ? <Field label={t('modelName')}>
+        <select className="dt-select" value={current.model} required={!!current.provider} disabled={!catalog || !!error || !current.provider}
+          onChange={event => {
+            const next = models.find(model => model.id === event.target.value)
+            set({ model: event.target.value, effort: next?.reasoning?.efforts.some(effort => effort.id === current.effort) ? current.effort : '' })
+          }}>
+          <option value="">{t(current.provider ? 'modelChoose' : 'modelInherit')}</option>
+          {current.model && !models.some(model => model.id === current.model) && <option value={current.model}>{current.model}</option>}
+          {models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}
+        </select>
+      </Field> : input('model', t('modelName'), t('modelInherit'))}
+      {providerSelect ? <Field label={t('modelEffort')}>
+        <select className="dt-select" value={current.effort} disabled={!catalog || !!error || !current.provider || !current.model || !efforts.length && !current.effort}
+          onChange={event => set({ effort: event.target.value })}>
+          <option value="">{t('modelEffortDefault')}</option>
+          {current.effort && !efforts.some(effort => effort.id === current.effort) && <option value={current.effort}>{current.effort}</option>}
+          {efforts.map(effort => <option key={effort.id} value={effort.id}>{effort.name}</option>)}
+        </select>
+      </Field> : input('effort', t('modelEffort'), t('modelEffortDefault'))}
     </div>
     {!providerSelect && <datalist id={`${id}-providers`}>{catalog?.groups.map(group => <option key={group.id}
       value={group.id}>{group.name}</option>)}</datalist>}
-    <datalist id={`${id}-models`}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
+    {!providerSelect && <><datalist id={`${id}-models`}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
     <datalist id={`${id}-efforts`}>
       {(models.find(model => model.id === current.model.trim())?.reasoning?.efforts ?? []).map(effort => <option key={effort.id}
         value={effort.id}>{effort.name}</option>)}
-    </datalist>
+    </datalist></>}
   </div>
 }
 
