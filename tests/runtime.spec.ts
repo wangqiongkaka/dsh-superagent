@@ -1871,3 +1871,13 @@ it('removes only the cleaned workspace registration and permits retry after regi
   expect((await runtime.executor.cleanupWorktrees(ticket.id))[0]!.removed).toBe(false)
   expect(deleteWorkspace).toHaveBeenCalledTimes(2)
 })
+
+it('registers shared memory tools for main and worker Sessions and updates their prompts when enabled', async () => {
+  const { sessionId } = await acceptedTicket()
+  for (const id of [runtime.masterId, sessionId]) {
+    for (const name of ['orchestrator_memory_read', 'orchestrator_memory_propose', 'orchestrator_memory_forget']) expect(tools.get(id)?.has(name)).toBe(true)
+    expect(await runTool(id, 'orchestrator_memory_read', { query: '项目约定' })).toEqual({ items: [], degraded: false })
+  }
+  runtime.memory.configure({ ...runtime.memory.config(), enabled: true, apiKey: 'test-only' })
+  for (const id of [runtime.masterId, sessionId]) expect(sections.get(id)!.text({})).toContain('orchestrator_memory_propose')
+})

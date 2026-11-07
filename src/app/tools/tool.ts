@@ -1,6 +1,5 @@
 /** Shared tool primitives and schemas for the main and executor Sessions. */
 import { z } from 'zod'
-import { IM_WORDS, wordCount } from '../../infra/text.ts'
 import { resourceGrammar } from '../resources.ts'
 
 export interface Tool<S extends z.ZodType = z.ZodType> {
@@ -12,9 +11,7 @@ export interface Tool<S extends z.ZodType = z.ZodType> {
 export type RegisterTool = <S extends z.ZodType>(name: string, description: string, schema: S, execute: Tool<S>['execute']) => void
 export const tool = <S extends z.ZodType>(definition: Tool<S>): Tool => definition as unknown as Tool
 
-/** Human-facing acknowledgement text, constrained to `IM_WORDS` regardless of which channel it is posted to. */
-export const AcknowledgementSchema = z.string().trim().min(1)
-  .refine(text => wordCount(text) <= IM_WORDS, `An acknowledgement has at most ${IM_WORDS} words (Chinese uses word segmentation); write one short sentence.`)
+export { AcknowledgementSchema } from '../../infra/text.ts'
 /**
  * Builds the `orchestrator_read` tool, scoping allowed resource patterns to the main Session or to an
  * Executor Session (which may read only its own ticket and messages that reached it).

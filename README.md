@@ -32,6 +32,8 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 
+- [010 项目与群共享记忆](docs/010-shared-memory.md)：Jev 筛选、跨会话共享与审核
+
 ## Development
 
 `pnpm check` runs the typecheck, the tests and the build.

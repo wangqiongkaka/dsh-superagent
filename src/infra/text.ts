@@ -1,4 +1,6 @@
 /** Word counting and string formatting utilities for IM message limits and templates. */
+import { z } from 'zod'
+
 const words = new Intl.Segmenter('zh', { granularity: 'word' })
 export const IM_WORDS = 100
 export const NOTE_WORDS = 30
@@ -8,6 +10,9 @@ export function wordCount(text: string): number {
   for (const segment of words.segment(text)) if (segment.isWordLike) count++
   return count
 }
+/** Human-facing acknowledgement text, constrained to `IM_WORDS` regardless of which channel it is posted to. */
+export const AcknowledgementSchema = z.string().trim().min(1)
+  .refine(text => wordCount(text) <= IM_WORDS, `An acknowledgement has at most ${IM_WORDS} words (Chinese uses word segmentation); write one short sentence.`)
 /** Validates that an outgoing IM Markdown message does not exceed `IM_WORDS` (link labels and URLs both count toward the limit). */
 export function checkedImText(text: string): string {
   const count = wordCount(text)

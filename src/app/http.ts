@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
+import { MemoryConflict, MemoryError, MemoryStatusSchema, type Memories } from './memory.ts'
 import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
 import { sourceSkills } from './context.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
@@ -30,6 +31,7 @@ import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
 
 export interface HttpHost {
   readonly store: Store
+  readonly memory: Memories
   /** Feishu message links resolved since startup, used by search to match AppLink URLs. */
   readonly sourceLinks: Pick<TextCache, 'entries'>
   readonly sources: SourceRegistry
@@ -87,7 +89,8 @@ function failure(error: unknown): [number, Record<string, unknown>] {
   if (error instanceof SetupError) return [400, { error: error.message, setup: error.problem }]
   if (error instanceof RouteError) return [error.status, { error: error.message }]
   if (error instanceof UserError) return [error.missing ? 404 : 400, { error: error.message, code: error.code, values: error.values }]
-  if (error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
+  if (error instanceof MemoryError) return [400, { error: error.message }]
+  if (error instanceof MemoryConflict || error instanceof SettingsConflict || error instanceof PromptConflict) return [409, { error: error.message }]
   return [500, { error: error instanceof Error ? error.message : String(error) }]
 }
 
@@ -154,6 +157,13 @@ function routes(runtime: HttpHost): Routes {
   const ticket = (id: string) => { if (!store.tickets.get(id)) throw new RouteError(404, 'Ticket not found'); return id }
   const promptBody = (input: { body: (maxBytes?: number) => Promise<unknown> }) => input.body(4 * runtime.machine.promptMaxChars.get() + 4096)
   return {
+    'GET memory': ({ query }) => {
+      const request = z.object({ scope: z.string().default(''), status: z.union([MemoryStatusSchema, z.literal('')]).default(''), offset }).parse(query)
+      return { ...runtime.memory.list(request.scope, request.status, request.offset), config: runtime.memory.view(), scopes: runtime.memory.scopes() }
+    },
+    'PUT memory/config': async ({ body }) => runtime.memory.configure(await body()),
+    'PUT memory/:id': async ({ params, body }) => runtime.memory.edit(params.id, await body()),
+    'GET memory/:id/history': ({ params }) => runtime.memory.history(params.id),
     'GET state': () => stateView(runtime),
     'POST master/rebuild': async ({ body }) => {
       const { masterId } = z.object({ masterId: z.string().min(1) }).strict().parse(await body())
