@@ -69,7 +69,9 @@ function SwitchRow({ label, hint, checked,
   </div>
 }
 type RoleModel = Settings['eval']['model']
-export function ModelField({ id, value, onChange }: { id: string; value: RoleModel; onChange: (next: RoleModel) => void }) {
+export function ModelField({ id, value, onChange, providerSelect = false }: {
+  id: string; value: RoleModel; onChange: (next: RoleModel) => void; providerSelect?: boolean
+}) {
   const { t, call } = usePanel()
   const [catalog, setCatalog] = useState<ApiResponse<'GET models'>>()
   const [error, setError] = useState<string>()
@@ -88,13 +90,20 @@ export function ModelField({ id, value, onChange }: { id: string; value: RoleMod
   return <div className="dt-model">
     <Hint>{fallback ? t('defaultModel', { model: `${fallback.provider} / ${fallback.model}${fallback.reasoningEffort
       ? ` · ${fallback.reasoningEffort}` : ''}` }) : t('defaultModelUnavailable')}</Hint>
-    {error && <p className="dt-error">{t('modelCatalogError', { error })}</p>}
+    {error && <p className="dt-error">{t(providerSelect ? 'modelProviderCatalogError' : 'modelCatalogError', { error })}</p>}
     <div className="dt-grid3">
-      {input('provider', t('modelProvider'), t('modelInherit'))}{input('model', t('modelName'), t('modelInherit'))}{input('effort',
+      {providerSelect ? <Field label={t('modelProvider')}>
+        <select className="dt-select" value={current.provider} onChange={event => set({ provider: event.target.value })}>
+          <option value="">{t('modelInherit')}</option>
+          {current.provider && !catalog?.groups.some(group => group.id === current.provider) &&
+            <option value={current.provider}>{current.provider}</option>}
+          {catalog?.groups.map(group => <option key={group.id} value={group.id}>{group.name}</option>)}
+        </select>
+      </Field> : input('provider', t('modelProvider'), t('modelInherit'))}{input('model', t('modelName'), t('modelInherit'))}{input('effort',
         t('modelEffort'), t('modelEffortDefault'))}
     </div>
-    <datalist id={`${id}-providers`}>{catalog?.groups.map(group => <option key={group.id}
-      value={group.id}>{group.name}</option>)}</datalist>
+    {!providerSelect && <datalist id={`${id}-providers`}>{catalog?.groups.map(group => <option key={group.id}
+      value={group.id}>{group.name}</option>)}</datalist>}
     <datalist id={`${id}-models`}>{models.map(model => <option key={model.id} value={model.id}>{model.name}</option>)}</datalist>
     <datalist id={`${id}-efforts`}>
       {(models.find(model => model.id === current.model.trim())?.reasoning?.efforts ?? []).map(effort => <option key={effort.id}

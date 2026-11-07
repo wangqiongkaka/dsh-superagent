@@ -3,7 +3,7 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Fields } from '../src/client/settings-kit.tsx'
-import { expect, it, onTestFinished } from 'vitest'
+import { expect, it, onTestFinished, vi } from 'vitest'
 import { zh } from '../src/client/locales.ts'
 import { usePanel, mount, remount, settle, all, find, tab, click, type, text, field } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
@@ -29,8 +29,8 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
   await click(find(zh['tab.settings'], '.dt-status-head button'))
   await click(zh['mode.auto'])
   await type(field<HTMLInputElement>(zh.evalTimeout), '180')
-  const [provider, model] = all('.dt-model input')
-  await type(provider as HTMLInputElement, 'worker-provider'); await type(model as HTMLInputElement, 'worker-model')
+  await type(field<HTMLSelectElement>(zh.modelProvider), 'worker-provider')
+  await type(field<HTMLInputElement>(zh.modelName), 'worker-model')
   await click(zh.save)
   expect(server.settings.eval).toEqual({ mode: 'auto', timeoutSeconds: 180, model: { provider: 'worker-provider', model: 'worker-model' } })
   await click(find(zh['promptPart.runtime/work'], '.dt-settings-link'))
@@ -58,6 +58,42 @@ it('saves the Eval block on the Policy settings and the Executor with its execut
       model: 'worker-model', reasoningEffort: 'high' } })
   expect(server.requests.filter(request => request.method === 'PUT').map(request => request.path)).toEqual(['settings/eval',
     'settings/executor'])
+})
+
+it('preserves an unavailable saved Eval provider and allows returning to the inherited default', async () => {
+  server.settings.eval.model = { provider: 'previous-provider', model: 'previous-model' }
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  const provider = field<HTMLSelectElement>(zh.modelProvider)
+  expect(provider.tagName).toBe('SELECT')
+  expect(provider.value).toBe('previous-provider')
+  expect([...provider.options].map(option => option.value)).toEqual(['', 'previous-provider', 'worker-provider'])
+  await type(field<HTMLInputElement>(zh.evalTimeout), '180')
+  await click(zh.save)
+  expect(server.settings.eval.model).toEqual({ provider: 'previous-provider', model: 'previous-model' })
+  await type(provider, '')
+  await type(field<HTMLInputElement>(zh.modelName), '')
+  await click(zh.save)
+  expect(server.settings.eval.model).toBeNull()
+})
+
+it('keeps the saved Eval provider visible when its catalog fails, without promising free provider input', async () => {
+  const fetch = globalThis.fetch
+  vi.stubGlobal('fetch', (url: string, init?: RequestInit) => url.endsWith('/models')
+    ? Promise.reject(new Error('catalog offline')) : fetch(url, init))
+  server.settings.eval.model = { provider: 'previous-provider', model: 'previous-model' }
+  await mount()
+  await click(zh['tab.eval'])
+  await click(find(zh['tab.settings'], '.dt-status-head button'))
+  const provider = field<HTMLSelectElement>(zh.modelProvider)
+  expect(provider.value).toBe('previous-provider')
+  expect([...provider.options].map(option => option.value)).toEqual(['', 'previous-provider'])
+  expect(document.querySelector('.dt-model .dt-error')?.textContent).toContain('无法加载服务商列表')
+  await type(provider, '')
+  await type(field<HTMLInputElement>(zh.modelName), '')
+  await click(zh.save)
+  expect(server.settings.eval.model).toBeNull()
 })
 
 it('loads configuration history on demand with localized changes, Source field labels and notified Tickets', async () => {
