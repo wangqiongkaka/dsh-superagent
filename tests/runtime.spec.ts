@@ -1876,8 +1876,8 @@ it('registers shared memory tools for main and worker Sessions and updates their
   const { sessionId } = await acceptedTicket()
   for (const id of [runtime.masterId, sessionId]) {
     for (const name of ['orchestrator_memory_read', 'orchestrator_memory_propose', 'orchestrator_memory_forget']) expect(tools.get(id)?.has(name)).toBe(true)
-    expect(await runTool(id, 'orchestrator_memory_read', { query: '项目约定' })).toEqual({ items: [], degraded: false })
+    expect(await runTool(id, 'orchestrator_memory_read', { query: '项目约定' })).toEqual({ scopes: [], items: [], degraded: false })
   }
-  runtime.memory.configure({ ...runtime.memory.config(), enabled: true, apiKey: 'test-only' })
+  runtime.memory.configure({ ...runtime.memory.config(), enabled: true, hindsightApiKey: 'test-hindsight-only' })
   for (const id of [runtime.masterId, sessionId]) expect(sections.get(id)!.text({})).toContain('orchestrator_memory_propose')
 })

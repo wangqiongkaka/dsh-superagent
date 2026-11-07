@@ -86,7 +86,6 @@ export const MACHINE = { stateDir: '/srv/dsh-superagent', promptMaxChars: 100000
 type Settings = ReturnType<typeof SettingsSchema.parse>
 export interface PanelServer {
   memory: ApiResponse<'GET memory'>
-  memoryHistory: Record<string, ApiResponse<'GET memory/:id/history'>>
   models?: ApiResponse<'GET models'>
   masterId: string
   rebuildError?: string
@@ -255,7 +254,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    memory: { config: { enabled: false, configured: false, revision: 0, model: 'jev-latest', threshold: 0.9 }, scopes: [], items: [], total: 0, nextOffset: null }, memoryHistory: {},
+    memory: { config: { enabled: false, configured: false, hindsightUrl: 'http://127.0.0.1:8888', consoleUrl: 'http://127.0.0.1:9999', revision: 0 }, scopes: [] },
     masterId: 'master', health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
@@ -300,35 +299,12 @@ const ticketOf = (id: string) =>
 const SourceSave = z.object({ enabled: z.boolean(), config: z.unknown() })
 
 const ROUTES: { [K in keyof Api]: Route<K> } = {
-  'GET memory': { query: ['scope', 'status', 'offset'], answer: ({ query }) => {
-    const items = server.memory.items.filter(item => (!query.scope || item.scope.id === query.scope) && (!query.status || item.status === query.status))
-    const offset = Number(query.offset ?? 0)
-    return { ...server.memory, items: items.slice(offset, offset + 30), total: items.length, nextOffset: items.length > offset + 30 ? offset + 30 : null }
-  } },
+  'GET memory': { answer: () => server.memory },
   'PUT memory/config': { body: true, answer: ({ body }) => {
     if (body.revision !== server.memory.config.revision) return refuse(409, '记忆设置已变化，请重新载入。')
-    const { apiKey, ...config } = body
-    return server.memory.config = { ...config, revision: config.revision + 1, configured: !!apiKey || server.memory.config.configured }
+    const { hindsightApiKey, ...config } = body
+    return server.memory.config = { ...config, revision: config.revision + 1, configured: !!hindsightApiKey || server.memory.config.configured }
   } },
-  'PUT memory/:id': { body: true, answer: ({ body, params }) => {
-    const entry = server.memory.items.find(item => item.id === params.id)
-    if (!entry) return refuse(404, '记忆不存在。')
-    if (entry.revision !== body.revision) return refuse(409, '记忆已被其他会话修改，请重新载入。')
-    const updated = { ...entry, ...body, scope: server.memory.scopes.find(scope => scope.id === body.scope) ?? entry.scope,
-      revision: entry.revision + 1, reason: 'manual' as const }
-    server.memory.items = server.memory.items.map(item => item.id === entry.id ? updated : item)
-    server.memoryHistory[entry.id] = [updated, ...server.memoryHistory[entry.id] ?? [entry]]
-    return updated
-  } },
-  'DELETE memory/:id': { body: true, answer: ({ body, params }) => {
-    const entry = server.memory.items.find(item => item.id === params.id)
-    if (!entry) return refuse(404, '记忆不存在。')
-    if (entry.revision !== body.revision) return refuse(409, '记忆已被其他会话修改，请重新载入后再删除。')
-    server.memory.items = server.memory.items.filter(item => item.id !== params.id)
-    delete server.memoryHistory[params.id]
-    return { deleted: true }
-  } },
-  'GET memory/:id/history': { answer: ({ params }) => server.memoryHistory[params.id] ?? [] },
   'GET state': { answer: stateView },
   'POST master/rebuild': { body: true, answer: ({ body }) => {
     if (server.rebuildError) return refuse(400, server.rebuildError, { code: 'masterBusy', values: {} })

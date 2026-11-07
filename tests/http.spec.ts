@@ -135,27 +135,24 @@ it('validates and forwards ignored-file confirmation', async () => {
   expect(requests).toEqual([['t1', ignored]])
 })
 
-it('validates memory settings and filters, excludes credentials and reports revision conflicts', async () => {
+it('configures only Hindsight, keeps credentials private, removes legacy settings and exposes no duplicate memory CRUD', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'memory-http-'))
   const store = new Store(join(directory, 'state.sqlite'))
   try {
     const memory = new Memories(store, new AbortController().signal)
     const call = serve({ memory })
-    expect((await call('PUT', 'memory/config', { ...memory.config(), enabled: true, apiKey: 'test-only-private' })).status).toBe(200)
+    store.set(KV.memory.legacySecret, 'test-old-screening-key')
+    expect((await call('PUT', 'memory/config', { ...memory.config(), enabled: true, hindsightApiKey: 'test-hindsight-private' })).status).toBe(200)
     const result = await call('GET', 'memory')
     expect(result.body.config).toMatchObject({ enabled: true, configured: true, revision: 1 })
-    expect(JSON.stringify(result)).not.toContain('test-only-private')
-    expect((await call('GET', 'memory?status=unknown')).status).toBe(400)
-    const scope = { id: 'test', kind: 'group' as const, label: 'test' }
-    store.set(KV.memory.entry('m'), { id: 'm', revision: 2, text: 'fact', scope, status: 'active', reason: 'manual',
-      source: { resource: 'trigger/a', quote: 'fact', at: '' }, createdAt: '', updatedAt: '' })
-    for (const body of [{}, { revision: 0 }, { revision: 2, extra: true }]) expect((await call('DELETE', 'memory/m', body)).status).toBe(400)
-    expect((await call('DELETE', 'memory/m', { revision: 1 })).status).toBe(409)
-    expect(await call('DELETE', 'memory/m', { revision: 2 })).toEqual({ status: 200, body: { deleted: true } })
-    expect((await call('GET', 'memory/m/history')).status).toBe(400)
-
+    expect(JSON.stringify(result)).not.toContain('test-hindsight-private')
+    expect(store.get(KV.memory.legacySecret)).toBeUndefined()
+    expect(result.body.config).not.toHaveProperty('model'); expect(result.body.config).not.toHaveProperty('threshold')
     expect((await call('PUT', 'memory/config', { ...memory.config(), revision: 0 })).status).toBe(409)
-    expect((await call('PUT', 'memory/config', { ...memory.config(), threshold: 2 })).status).toBe(400)
-    expect((await call('PUT', 'memory/missing', { revision: 1, text: '', scope: 'x', status: 'active' })).status).toBe(400)
+    expect((await call('PUT', 'memory/config', { ...memory.config(), threshold: .9 })).status).toBe(400)
+    expect((await call('PUT', 'memory/config', { ...memory.config(), apiKey: 'old-key' })).status).toBe(400)
+    expect((await call('PUT', 'memory/config', { ...memory.config(), hindsightUrl: 'not-a-url' })).status).toBe(400)
+    for (const [method, path, body] of [['PUT', 'memory/m', {}], ['DELETE', 'memory/m', {}], ['GET', 'memory/m/history', undefined]] as const)
+      expect((await call(method, path, body)).status).toBe(404)
   } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
 })

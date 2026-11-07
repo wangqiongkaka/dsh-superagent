@@ -316,6 +316,8 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
+| `src/app/memory.ts`, `src/app/hindsight.ts`, `src/app/tools/memory.ts` | 项目/群授权、来源原文直达 Hindsight、原生事实检索及删除保护 |
+| `src/client/memory.tsx` | Hindsight 连接配置及原生记忆管理入口 |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -437,6 +439,7 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/external-tools.spec.ts` | External worker MCP authentication, argument validation and Assignment revocation |
 | `tests/external-workers.spec.ts` | Codex and Claude Code worker selection, the native main Session, scoped reports, missing-provider failure and panel-only selection |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
+| `tests/memory.spec.ts`, `tests/panel-memory.spec.tsx` | Hindsight 原生来源直写、默认群范围、显式项目共享、原生记忆召回及并发删除保护 |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
 | `tests/master-rebuild.spec.ts` | 主会话重建、评估恢复、运行中拒绝、创建失败回退、并发投递和旧会话派工拦截 |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |

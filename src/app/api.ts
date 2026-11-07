@@ -1,5 +1,5 @@
 /** Type-only management API contract between the web panel and host routes, imported by the panel without bundling host code. */
-import type { Memories, MemoryConfig, MemoryEntry, MemoryScope } from './memory.ts'
+import type { Memories, MemoryConfig, MemoryScope } from './memory.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { HarnessCatalog } from './harness.ts'
 import type { PromptConfig, Prompts } from './prompts.ts'
@@ -20,11 +20,8 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
-  'GET memory': { query?: { scope?: string; status?: string; offset?: number }; response: ReturnType<Memories['list']> & { config: ReturnType<Memories['view']>; scopes: MemoryScope[] } }
-  'PUT memory/config': { body: MemoryConfig & { apiKey?: string }; response: ReturnType<Memories['view']> }
-  'PUT memory/:id': { body: { revision: number; text: string; scope: string; status: MemoryEntry['status'] }; response: MemoryEntry }
-  'DELETE memory/:id': { body: { revision: number }; response: { deleted: true } }
-  'GET memory/:id/history': { response: MemoryEntry[] }
+  'GET memory': { response: { config: ReturnType<Memories['view']>; scopes: MemoryScope[] } }
+  'PUT memory/config': { body: MemoryConfig & { hindsightApiKey?: string }; response: ReturnType<Memories['view']> }
   'GET state': { response: StateView }
   'POST master/rebuild': { body: { masterId: string }; response: { masterId: string } }
   'GET overview': { response: OverviewView }

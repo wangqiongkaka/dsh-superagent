@@ -1,71 +1,33 @@
 // @vitest-environment jsdom
 import { expect, it } from 'vitest'
-import { usePanel, at, mount, click, type, field, text, find, settle } from './fixtures/panel.tsx'
+import { usePanel, at, mount, click, type, field, text } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
 usePanel()
-function start() {
-  at({ page: 'settings', query: { group: 'memory' } })
-  server.memory.scopes = [{ id: 'p', kind: 'project', label: 'app' }]
-  server.memory.items = [{ id: 'm', revision: 2, text: '使用 SQLite', scope: server.memory.scopes[0]!, status: 'pending', reason: 'conflict',
-    source: { resource: 'trigger/a', quote: '项目使用 SQLite', at: '' }, createdAt: '', updatedAt: '' }]
-}
-it('configures Jev without storing the credential in browser drafts, and retains it on a blank save', async () => {
+const start = () => at({ page: 'settings', query: { group: 'memory' } })
+it('configures Hindsight without exposing its key in drafts and retains the key on a blank save', async () => {
   start(); await mount()
-  expect(field<HTMLInputElement>('TypeSafe API 密钥').type).toBe('password')
-  await type(field('TypeSafe API 密钥'), 'private-test-value'); await click('启用共享记忆'); await click('保存')
+  expect(field<HTMLInputElement>('Hindsight API 密钥').type).toBe('password')
+  await type(field('Hindsight API 密钥'), 'private-hindsight-key'); await click('启用共享记忆'); await click('保存')
   expect(server.memory.config.enabled).toBe(true); expect(server.memory.config.configured).toBe(true)
-  expect(field<HTMLInputElement>('TypeSafe API 密钥').value).toBe('')
-  expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain('private-test-value')
+  expect(field<HTMLInputElement>('Hindsight API 密钥').value).toBe('')
+  expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain('private-hindsight-key')
   await click('保存'); expect(server.memory.config.configured).toBe(true)
 })
-it('reviews, edits, deactivates and reads history without deleting the audit trail', async () => {
-  start(); await mount(); expect(text()).toContain('与已有记忆冲突')
-  await click('确认生效'); expect(server.memory.items[0]!.status).toBe('active')
-  await click('编辑'); await type(field('记忆正文'), 'SQLite 用于保存状态')
-  const card = field('记忆正文').closest('article')!
-  await click([...card.querySelectorAll('button')].find(button => button.textContent === '保存')!)
-  expect(server.memory.items[0]!.text).toBe('SQLite 用于保存状态')
-  await click('停用记忆'); expect(server.memory.items[0]!.status).toBe('deleted')
-  await click('版本历史'); expect(text()).toContain('v2'); expect(text()).toContain('使用 SQLite')
-  await type(field('记忆状态'), 'pending'); expect(text()).toContain('暂无记忆')
+it('delegates memory management to the saved Hindsight console URL and removes the custom screening and review UI', async () => {
+  start(); await mount()
+  const link = document.querySelector<HTMLAnchorElement>('a[href="http://127.0.0.1:9999"]')!
+  expect(link.textContent).toContain('打开 Hindsight 管理'); expect(link.target).toBe('_blank'); expect(link.rel).toContain('noopener')
+  expect(text()).not.toContain('TypeSafe API 密钥'); expect(text()).not.toContain('自动保存阈值')
+  expect(text()).not.toContain('确认生效'); expect(text()).not.toContain('记忆来源记录')
+  await type(field('Hindsight 管理页面'), 'https://memory.example/console')
+  expect(link.href).toBe('http://127.0.0.1:9999/')
+  await click('保存')
+  expect(document.querySelector<HTMLAnchorElement>('a[href="https://memory.example/console"]')).not.toBeNull()
 })
-it('preserves the draft on a competing update and refuses to overwrite a newer version', async () => {
-  start(); await mount(); await click('编辑'); await type(field('记忆正文'), '本地草稿')
-  server.memory.items[0] = { ...server.memory.items[0]!, revision: 3, text: '另一会话修改' }
-  await click('刷新列表'); expect(field<HTMLTextAreaElement>('记忆正文').value).toBe('本地草稿')
-  const card = field('记忆正文').closest('article')!
-  await click([...card.querySelectorAll('button')].find(button => button.textContent === '保存')!)
-  expect(text()).toContain('记忆已被其他会话修改'); expect(server.memory.items[0]!.text).toBe('另一会话修改')
-  expect(field<HTMLTextAreaElement>('记忆正文').value).toBe('本地草稿')
-  await click('取消'); await click('编辑'); expect(field<HTMLTextAreaElement>('记忆正文').value).toBe('另一会话修改')
-})
-it('requires confirmation, allows cancellation, and removes the record and its history after deletion', async () => {
-  start(); server.memoryHistory.m = [server.memory.items[0]!]; await mount()
-  await click('永久删除')
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('全部版本')
-  expect(server.requests.some(request => request.method === 'DELETE')).toBe(false)
-  await click('取消'); expect(server.memory.items).toHaveLength(1)
-  await click('永久删除')
-  await click(document.querySelector<HTMLElement>('[role="dialog"] .dt-btn-primary')!)
-  expect(server.memory.items).toEqual([]); expect(server.memoryHistory.m).toBeUndefined()
-  expect(text()).toContain('暂无记忆'); expect(document.querySelector('[role="dialog"]')).toBeNull()
-  expect(server.requests.filter(request => request.method === 'DELETE')).toEqual([{ path: 'memory/m', method: 'DELETE', body: { revision: 2 } }])
-})
-it('keeps the confirmation snapshot and refuses to delete a record edited while the dialog is open', async () => {
-  start(); await mount(); await click('永久删除')
-  server.memory.items[0] = { ...server.memory.items[0]!, revision: 3, text: '其他会话的新内容' }
-  await click('刷新列表')
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain('使用 SQLite')
-  await click(document.querySelector<HTMLElement>('[role="dialog"] .dt-btn-primary')!)
-  expect(text()).toContain('重新载入后再删除')
-  expect(server.memory.items[0]!.text).toBe('其他会话的新内容')
-  expect(document.querySelector('[role="dialog"]')).not.toBeNull()
-})
-it('returns to the previous page after removing the last record of a page', async () => {
-  start()
-  server.memory.items = Array.from({ length: 31 }, (_, index) => ({ ...server.memory.items[0]!, id: `m${index}` }))
-  await mount(); await click('下一页')
-  await click('永久删除'); await click(document.querySelector<HTMLElement>('[role="dialog"] .dt-btn-primary')!)
-  expect(server.memory.items).toHaveLength(30)
-  expect(document.querySelectorAll('article')).toHaveLength(30)
+it('keeps the draft when another session changes settings and can explicitly reload the saved connection', async () => {
+  start(); await mount(); await type(field('Hindsight 服务地址'), 'https://draft.example')
+  server.memory.config = { ...server.memory.config, revision: 1, hindsightUrl: 'https://saved.example' }
+  await click('保存'); expect(text()).toContain('记忆设置已变化')
+  expect(field<HTMLInputElement>('Hindsight 服务地址').value).toBe('https://draft.example')
+  await click('重新载入设置'); expect(field<HTMLInputElement>('Hindsight 服务地址').value).toBe('https://saved.example')
 })
