@@ -21,6 +21,7 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
 
 export const KV = {
   memory: { config: record<MemoryConfig>('memory-config'), hindsightSecret: record<string>('memory-hindsight-key'),
+    consoleSecret: record<{ origin: string; key: string }>('memory-console-key'),
     /** Removed screening credential; only used to erase the legacy secret when saving new connection settings. */
     legacySecret: record<string>('memory-api-key'), purged: family<number>('memory-purged:') },
   /** Store: current database schema version. */

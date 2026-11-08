@@ -254,7 +254,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    memory: { config: { enabled: false, configured: false, hindsightUrl: 'http://127.0.0.1:8888', consoleUrl: 'http://127.0.0.1:9999', revision: 0 }, scopes: [] },
+    memory: { config: { enabled: false, configured: false, consoleConfigured: false, hindsightUrl: 'http://127.0.0.1:8888', consoleUrl: 'http://127.0.0.1:9999', revision: 0 }, scopes: [] },
     masterId: 'master', health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
@@ -302,8 +302,10 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET memory': { answer: () => server.memory },
   'PUT memory/config': { body: true, answer: ({ body }) => {
     if (body.revision !== server.memory.config.revision) return refuse(409, '记忆设置已变化，请重新载入。')
-    const { hindsightApiKey, ...config } = body
-    return server.memory.config = { ...config, revision: config.revision + 1, configured: !!hindsightApiKey || server.memory.config.configured }
+    const { hindsightApiKey, hindsightConsoleKey, ...config } = body
+    const moved = new URL(config.consoleUrl).origin !== new URL(server.memory.config.consoleUrl).origin
+    return server.memory.config = { ...config, revision: config.revision + 1, configured: !!hindsightApiKey || server.memory.config.configured,
+      consoleConfigured: hindsightConsoleKey === null ? false : !!hindsightConsoleKey || !moved && server.memory.config.consoleConfigured }
   } },
   'GET state': { answer: stateView },
   'POST master/rebuild': { body: true, answer: ({ body }) => {

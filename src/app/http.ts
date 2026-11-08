@@ -247,12 +247,12 @@ function match(table: Routes, method: string, segments: string[]) {
 export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
   if (ctx.webServer.host !== '127.0.0.1') throw new Error('Orchestrator management requires a loopback Web server')
   const table = routes(runtime)
-  const console = new MemoryConsole(ctx.webServer.port, () => runtime.memory.config().consoleUrl)
+  const console = new MemoryConsole(() => runtime.memory.config().consoleUrl, ctx.connection, () => runtime.memory.consoleKey())
   const disposers = [
     ctx.webServer.register({ kind: 'prefix', path: '/orchestrator', handler: async (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
       if (url.pathname === MEMORY_CONSOLE_PATH || url.pathname.startsWith(MEMORY_CONSOLE_PATH + '/')) {
-        await runtime.ready; console.forward(req, res); return
+        await runtime.ready; await console.forward(req, res); return
       }
       if (!url.pathname.startsWith('/orchestrator/api/')) { res.writeHead(404); res.end(); return }
       if (!sameOrigin(req, ctx.webServer.port)) { json(res, 403, { error: 'Same-origin management request required' }); return }
@@ -262,7 +262,6 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
         if (!route) throw new RouteError(404, 'Unknown operation')
         const query = Object.fromEntries(url.searchParams)
         const value = await route.run({ params: route.params as never, query, body: maxBytes => readBody(req, maxBytes) })
-        if (req.method === 'GET' && url.pathname === '/orchestrator/api/memory') console.authorize(res)
         json(res, 200, value)
       } catch (error) { json(res, ...failure(error)) }
     } })]

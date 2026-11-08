@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { act } from 'react'
 import { usePanel, at, mount, click, type, field, text } from './fixtures/panel.tsx'
 import { server } from './fixtures/panel-server.ts'
 usePanel()
 const consolePath = '/orchestrator/hindsight/'
 const start = () => at({ page: 'settings', query: { group: 'memory' } })
+it('opens the native dashboard in an external browser from the desktop shell, keeping the embedded view on the proxy', async () => {
+  vi.stubGlobal('location', new URL('dsh-app://app/'))
+  try {
+    server.memory.config.consoleUrl = 'http://127.0.0.1:9998/orchestrator/hindsight/dashboard'
+    start(); await mount()
+    expect(document.querySelector('iframe')?.getAttribute('src')).toBe(consolePath)
+    expect(document.querySelector('a[target="_blank"]')?.getAttribute('href')).toBe('http://127.0.0.1:9998/orchestrator/hindsight/dashboard')
+  } finally { vi.unstubAllGlobals() }
+})
 it('configures Hindsight without exposing its key in drafts and retains the key on a blank save', async () => {
   start(); await mount()
   expect(field<HTMLInputElement>('Hindsight API 密钥').type).toBe('password')
@@ -61,4 +70,20 @@ it('reloads only the console and keeps it mounted when merely reloading connecti
   expect(document.querySelector('iframe')).not.toBe(frame)
   expect(document.querySelector('iframe')!.getAttribute('src')).toBe(consolePath)
   expect(server.requests.some(request => request.method === 'PUT')).toBe(false)
+})
+
+it('configures automatic console login without exposing the key in drafts and can explicitly disable it', async () => {
+  start(); await mount()
+  const label = 'Hindsight 管理密钥（自动登录）'
+  expect(field<HTMLInputElement>(label).type).toBe('password')
+  const frame = document.querySelector('iframe')!
+  await type(field(label), 'private-console-login-key'); await click('保存')
+  expect(server.memory.config.consoleConfigured).toBe(true); expect(server.memory.config.configured).toBe(false)
+  expect(field<HTMLInputElement>(label).value).toBe('')
+  expect(document.querySelector('iframe')).not.toBe(frame)
+  expect(JSON.stringify({ ...sessionStorage, ...localStorage, publicView: server.memory })).not.toContain('private-console-login-key')
+  expect(text()).toContain('已启用自动登录')
+  await click('保存'); expect(server.memory.config.consoleConfigured).toBe(true)
+  await click('关闭自动登录'); expect(text()).toContain('保存后关闭自动登录')
+  await click('保存'); expect(server.memory.config.consoleConfigured).toBe(false)
 })

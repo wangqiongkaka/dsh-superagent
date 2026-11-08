@@ -15,7 +15,7 @@ import { setupText, type T } from './text.ts'
 import { CheckSetupButton, Hint, KeyValues, Section, SetupMessage } from './widgets.tsx'
 
 export type DeploymentForm = ConfigPageForm | undefined
-type Op = Parameters<ConfigPageForm['mutate']>[0][number]
+type Op = Parameters<ConfigForm<Record<string, unknown>>['mutate']>[0][number]
 
 const MACHINE_LIMITS = ['promptMaxChars', 'admissionContextMaxPages', 'admissionContextTimeoutMs'] as const
 type Limits = Record<typeof MACHINE_LIMITS[number], string>

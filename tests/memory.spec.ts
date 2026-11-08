@@ -231,6 +231,17 @@ it('removes obsolete screening settings and credentials while retaining only Hin
   expect(store.get(KV.memory.legacySecret)).toBeUndefined()
   expect(store.get(KV.memory.config)).toEqual(memory.config())
 })
+it('keeps the console auto-login key private, retains it for the same origin and clears it when moving or disabling', () => {
+  memory.configure({ ...memory.config(), hindsightConsoleKey: 'private-ui-key' })
+  expect(memory.view().consoleConfigured).toBe(true); expect(memory.consoleKey()).toBe('private-ui-key')
+  expect(JSON.stringify(memory.view())).not.toContain('private-ui-key')
+  expect(JSON.stringify(memory.config())).not.toContain('private-ui-key')
+  memory.configure({ ...memory.config(), hindsightConsoleKey: '' }); expect(memory.consoleKey()).toBe('private-ui-key')
+  memory.configure({ ...memory.config(), consoleUrl: 'https://other.example/orchestrator/hindsight/dashboard' })
+  expect(memory.consoleKey()).toBe(''); expect(memory.view().consoleConfigured).toBe(false)
+  memory.configure({ ...memory.config(), hindsightConsoleKey: 'replacement-ui-key' })
+  memory.configure({ ...memory.config(), hindsightConsoleKey: null }); expect(memory.consoleKey()).toBe('')
+})
 it('disabled mode makes no backend calls and injects no memory instructions', async () => {
   memory.configure({ ...memory.config(), enabled: false }); request.mockClear()
   expect(await memory.recall('知识', 'a')).toEqual({ scopes: [], items: [], degraded: false })

@@ -15,7 +15,7 @@ const HttpUrl = z.string().url().refine(value => {
   const url = new URL(value); url.search = ''; url.hash = ''; return url.toString().replace(/\/+$/, '')
 })
 export const MemoryConfigSchema = z.object({ enabled: z.boolean().default(false),
-  hindsightUrl: HttpUrl.default('http://127.0.0.1:8888'), consoleUrl: HttpUrl.default('http://127.0.0.1:9999/orchestrator/hindsight'),
+  hindsightUrl: HttpUrl.default('http://127.0.0.1:8888'), consoleUrl: HttpUrl.default('http://127.0.0.1:9999/orchestrator/hindsight/dashboard'),
   revision: z.number().int().nonnegative().default(0) }).strict()
 export type MemoryConfig = z.infer<typeof MemoryConfigSchema>
 export interface MemoryScope { id: string; kind: 'project' | 'group'; label: string }
@@ -35,9 +35,14 @@ export class Memories {
   config(): MemoryConfig { return MemoryConfigSchema.strip().parse(this.store.get(KV.memory.config) ?? {}) }
   private credential(): string { return this.store.get(KV.memory.hindsightSecret) || process.env.HINDSIGHT_API_KEY || '' }
   private hindsight(config = this.config()): Hindsight { return new Hindsight(config.hindsightUrl, this.credential(), this.lifetime, this.request) }
-  view() { return { ...this.config(), configured: !!this.credential() } }
+  consoleKey(): string {
+    const secret = this.store.get(KV.memory.consoleSecret)
+    return secret?.origin === new URL(this.config().consoleUrl).origin ? secret.key : ''
+  }
+  view() { return { ...this.config(), configured: !!this.credential(), consoleConfigured: !!this.consoleKey() } }
   configure(input: unknown) {
-    const { hindsightApiKey, ...config } = MemoryConfigSchema.extend({ hindsightApiKey: z.string().trim().max(4096).optional() }).parse(input)
+    const { hindsightApiKey, hindsightConsoleKey, ...config } = MemoryConfigSchema.extend({ hindsightApiKey: z.string().trim().max(4096).optional(),
+      hindsightConsoleKey: z.string().trim().max(4096).nullable().optional() }).parse(input)
     return this.store.atomic(() => {
       const current = this.config(), moved = config.hindsightUrl !== current.hindsightUrl
       if (config.revision !== current.revision) throw new MemoryConflict('记忆设置已变化，请重新载入。')
@@ -46,6 +51,9 @@ export class Memories {
       if (config.enabled && !(hindsightApiKey || this.credential())) throw new MemoryError('请先配置 Hindsight API 密钥。')
       if (moved) this.store.delete(KV.memory.hindsightSecret)
       if (hindsightApiKey) this.store.set(KV.memory.hindsightSecret, hindsightApiKey)
+      const origin = new URL(config.consoleUrl).origin
+      if (origin !== new URL(current.consoleUrl).origin || hindsightConsoleKey === null) this.store.delete(KV.memory.consoleSecret)
+      if (hindsightConsoleKey) this.store.set(KV.memory.consoleSecret, { origin, key: hindsightConsoleKey })
       this.store.delete(KV.memory.legacySecret)
       this.store.set(KV.memory.config, { ...config, revision: config.revision + 1 })
       return this.view()

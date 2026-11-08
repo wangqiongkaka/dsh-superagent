@@ -1,10 +1,10 @@
 /** Same-origin, session-gated transport for the native Hindsight UI; memory APIs stay in Hindsight. */
-import { randomBytes } from 'node:crypto'
+import { createHash } from 'node:crypto'
+import type { HostConnectionHandle } from '@deepseek-ai/dsh-client-connection'
 import { request as http, type IncomingMessage, type ServerResponse, type OutgoingHttpHeaders } from 'node:http'
 import { request as https } from 'node:https'
 import { MEMORY_CONSOLE_PATH } from './api.ts'
 
-const GATE_COOKIE = 'dsh_memory_console'
 const nativeCookie = (value: string) => /^(?:hindsight_cp_access|NEXT_LOCALE)=/.test(value)
 const requestHeaders = ['accept', 'accept-language', 'content-type', 'content-length', 'range', 'if-none-match', 'if-modified-since',
   'rsc', 'next-router-state-tree', 'next-router-prefetch', 'next-url', 'next-action']
@@ -14,32 +14,56 @@ function error(res: ServerResponse, status: number, message: string) {
     'content-security-policy': "default-src 'none'; frame-ancestors 'self'", 'x-content-type-options': 'nosniff' })
   res.end(`<!doctype html><html lang="zh-CN"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>Hindsight</title><p>${message}</p></html>`)
 }
-
-/** Issues an HttpOnly capability through the protected panel API, then streams only the configured console. */
-export class MemoryConsole {
-  private readonly token = randomBytes(32).toString('hex')
-  constructor(private readonly port: number, private readonly url: () => string) {}
-  authorize(res: ServerResponse): void {
-    res.setHeader('set-cookie', `${GATE_COOKIE}=${this.token}; Path=${MEMORY_CONSOLE_PATH}; HttpOnly; SameSite=Strict`)
+function remember(cookies: Map<string, string>, values: string[]): void {
+  for (const cookie of values.filter(nativeCookie)) {
+    const pair = cookie.split(';')[0]!, at = pair.indexOf('='), name = pair.slice(0, at), value = pair.slice(at + 1)
+    if (!value || /;\s*max-age=0(?:;|$)/i.test(cookie)) cookies.delete(name)
+    else cookies.set(name, value)
   }
-  forward(req: IncomingMessage, res: ServerResponse): void {
-    const host = req.headers.host, cookies = (req.headers.cookie ?? '').split(';').map(value => value.trim())
-    if ((host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`)
-      || !cookies.includes(`${GATE_COOKIE}=${this.token}`) || req.headers['sec-fetch-site'] === 'cross-site'
-      || (req.headers.origin !== undefined && req.headers.origin !== `http://${host}`)) {
-      error(res, 403, '请先打开 Superagent 的“设置 → 记忆”，再重新加载管理页面。'); return
+}
+
+/** Authenticates through DSH and keeps native cookies server-side because the desktop bridge strips browser cookies. */
+export class MemoryConsole {
+  private readonly sessions = new Map<string, { cookies: Map<string, string>; login: Promise<void> | undefined }>()
+  constructor(private readonly url: () => string, private readonly connection: Pick<HostConnectionHandle, 'admit'>, private readonly key: () => string) {}
+  private async signIn(target: URL, key: string, cookies: Map<string, string>): Promise<void> {
+    const response = await fetch(new URL(MEMORY_CONSOLE_PATH + '/api/auth/login', target), { method: 'POST', redirect: 'manual',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key }), signal: AbortSignal.timeout(10_000) })
+    if (response.ok) remember(cookies, response.headers.getSetCookie())
+    await response.body?.cancel()
+  }
+  async forward(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const admission = this.connection.admit(req)
+    if ('rejection' in admission) {
+      error(res, admission.rejection, 'DSH 连接认证已失效，请重新连接 DSH 后加载管理页面。'); return
     }
     const target = new URL(this.url()), incoming = new URL(req.url ?? '/', 'http://localhost')
-    if (target.pathname.replace(/\/$/, '') !== MEMORY_CONSOLE_PATH) {
+    if (![MEMORY_CONSOLE_PATH, MEMORY_CONSOLE_PATH + '/dashboard'].includes(target.pathname.replace(/\/$/, ''))) {
       error(res, 502, `Hindsight 控制台需要部署在 ${MEMORY_CONSOLE_PATH} 路径。请检查连接设置与控制台部署配置。`); return
+    }
+    const identity = (req.headers.cookie ?? '').split(';').map(value => value.trim()).filter(value => value.startsWith('dsh-auth-')).sort().join(';')
+    if (!identity) { error(res, 401, '请通过已登录的 DSH 连接打开管理页面。'); return }
+    const key = this.key(), id = createHash('sha256').update(identity + '\0' + target.href + '\0' + key).digest('hex')
+    let session = this.sessions.get(id)
+    if (!session) {
+      // Bound transient sessions; native access keys and memory content are never stored here.
+      if (this.sessions.size >= 64) this.sessions.delete(this.sessions.keys().next().value!)
+      session = { cookies: new Map(), login: undefined }; this.sessions.set(id, session)
+    }
+    const current = session, sessionCookies = current.cookies
+    if (key && req.method === 'GET' && [MEMORY_CONSOLE_PATH, MEMORY_CONSOLE_PATH + '/'].includes(incoming.pathname)) {
+      // A refused automatic sign-in falls back to the native login page; native logout remains manual until this entry is reopened.
+      current.login ??= this.signIn(target, key, sessionCookies).catch(() => {}).finally(() => { current.login = undefined })
+      await current.login
+      if (res.destroyed) return
     }
     target.pathname = incoming.pathname; target.search = incoming.search
     // Hindsight 1.2's locale matcher skips the bare base path after trailing-slash normalization.
     if (target.pathname === MEMORY_CONSOLE_PATH || target.pathname === MEMORY_CONSOLE_PATH + '/') target.pathname = MEMORY_CONSOLE_PATH + '/dashboard'
     const headers: OutgoingHttpHeaders = {}
     for (const name of requestHeaders) if (req.headers[name] !== undefined) headers[name] = req.headers[name]
-    const session = cookies.filter(nativeCookie).join('; ')
-    if (session) headers.cookie = session
+    const cookie = [...sessionCookies].map(([name, value]) => `${name}=${value}`).join('; ')
+    if (cookie) headers.cookie = cookie
     if (req.headers.origin) headers.origin = target.origin
     headers['x-forwarded-proto'] = target.protocol.slice(0, -1)
     const upstream = (target.protocol === 'https:' ? https : http)(target, { method: req.method, headers }, response => {
@@ -57,9 +81,7 @@ export class MemoryConsole {
         }
         outgoing.location = location.pathname + location.search + location.hash
       }
-      const setCookie = (response.headers['set-cookie'] ?? []).filter(nativeCookie)
-        .map(value => value.replace(/;\s*(?:Domain|Path)=[^;]*/ig, '') + `; Path=${MEMORY_CONSOLE_PATH}`)
-      if (setCookie.length) outgoing['set-cookie'] = setCookie
+      remember(sessionCookies, response.headers['set-cookie'] ?? [])
       outgoing['cache-control'] = 'no-store'
       outgoing['x-frame-options'] = 'SAMEORIGIN'
       outgoing['content-security-policy'] = [response.headers['content-security-policy'], "frame-ancestors 'self'"].filter(Boolean).join('; ')

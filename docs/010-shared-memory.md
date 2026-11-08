@@ -4,19 +4,21 @@
 
 ## 连接配置
 
-在 **设置 → 记忆** 的“连接设置”填写 Hindsight API 地址、服务访问密钥和管理页面地址并保存；需要会话读写共享记忆时，再开启共享记忆。默认地址分别为 `http://127.0.0.1:8888` 和 `http://127.0.0.1:9999/orchestrator/hindsight`，均由 Superagent 服务端访问。也可用服务进程环境中的 `HINDSIGHT_API_KEY` 提供 API 密钥。密钥只保存于服务端，输入框留空保留原值，不在响应和浏览器草稿中返回。
+在 **设置 → 记忆** 的“连接设置”填写 Hindsight API 地址、服务访问密钥和管理页面地址并保存；需要会话读写共享记忆时，再开启共享记忆。默认地址分别为 `http://127.0.0.1:8888` 和 `http://127.0.0.1:9999/orchestrator/hindsight/dashboard`，均由 Superagent 服务端访问。也可用服务进程环境中的 `HINDSIGHT_API_KEY` 提供 API 密钥。密钥只保存于服务端，输入框留空保留原值，不在响应和浏览器草稿中返回。
 
 生成式模型、embedding、重排和 Jev 等 decision model 均在 Hindsight 服务中配置，与 DSH 会话模型独立。Superagent 中旧的模型、阈值设置会被忽略；保存新连接配置时清除其旧筛选凭据，不会修改 Hindsight 自己的 Jev 配置。
 
 ## 原生记忆管理
 
-**设置 → 记忆** 页内直接嵌入 Hindsight 原生管理控制台，保留原生 bank、事实、来源文档、派生知识、编辑、删除和历史管理。控制台独立登录；管理密钥从 Hindsight 部署配置取得，不能把服务端 API 密钥当作 UI 登录密钥。Superagent 不向内嵌页面或 URL 注入 API 密钥、管理密钥，也不复制一套本地记忆管理界面。
+**设置 → 记忆** 页内直接嵌入 Hindsight 原生管理控制台，保留原生 bank、事实、来源文档、派生知识、编辑、删除和历史管理。管理密钥从 Hindsight 部署配置取得，不能把服务端 API 密钥当作 UI 登录密钥。在“连接设置”的“管理密钥（自动登录）”中填写并保存后，已通过 DSH 认证的用户打开或重新加载记忆页时，由服务端调用 Hindsight 原生登录接口，无需在内嵌页面输入密钥。未配置或自动登录失败时，保留原生手动登录。
 
-已配置连接时，“连接设置”默认收起；未配置时默认展开。手动展开或收起后，页面轮询不会改回默认状态。内嵌控制台与“在新窗口打开”均通过 Superagent 的同源 `/orchestrator/hindsight/` 入口转发至已保存的管理页面地址，未保存的地址草稿不生效；“重新加载”只重新加载控制台，不刷新整个设置页。关闭共享记忆仍可管理已有记忆。
+管理密钥与 API 密钥分开保存在服务端状态中，只返回是否配置；输入框保存后清空，不写入浏览器草稿，也不通过页面、URL 或重定向传递密钥。密钥绑定控制台 origin，切换到另一 origin 会清除旧管理密钥；留空保留，点击“关闭自动登录”后保存则清除。服务端备份也包含这些连接凭据，应按含密钥的备份管理。Superagent 不复制一套本地记忆管理界面。
 
-手机和远程浏览器只访问 Superagent 的现有入口，不直接访问 `127.0.0.1:9999`，也不需要单独开放 Hindsight 端口。打开记忆设置后，受同源校验保护的管理 API 签发 HttpOnly、SameSite=Strict 的控制台访问 Cookie；转发时只传递 Hindsight 登录／语言 Cookie，不传递 Superagent 凭据或 API 密钥。重启后可重新打开记忆设置获取访问资格；Hindsight 仍要求独立登录。连接失败时显示错误说明，可重新加载或在新窗口打开。
+已配置连接时，“连接设置”默认收起；未配置时默认展开。手动展开或收起后，页面轮询不会改回默认状态。内嵌控制台通过 Superagent 的同源 `/orchestrator/hindsight/` 入口转发至已保存的管理页面地址，未保存的地址草稿不生效；“重新加载”只重新加载控制台，不刷新整个设置页。关闭共享记忆仍可管理已有记忆。网页端“在新窗口打开”继续使用同源入口；桌面壳只允许在外部浏览器打开 HTTP(S) 链接，因此该按钮使用电脑可访问的原生 `/dashboard` 地址并独立登录。
 
-控制台必须按 Hindsight 的子路径部署方式，以 `NEXT_PUBLIC_BASE_PATH=/orchestrator/hindsight` **构建**，并在管理页面地址中填写该路径。仅给已构建的根路径镜像添加运行时变量无法修改 Next.js 静态资源与路由。使用官方 Dockerfile 可指定 `--build-arg NEXT_PUBLIC_BASE_PATH=/orchestrator/hindsight --target cp-only`；记忆 API 可继续使用原地址。转发保留完整路径，重写控制台跳转与 Cookie 路径，并拒绝跨站请求；不提供任意目标代理。Superagent 此处只管理连接，不提供 Hindsight 服务启停或模型配置。
+手机和远程浏览器只访问 Superagent 的现有入口，不直接访问 `127.0.0.1:9999`，也不需要单独开放 Hindsight 端口。转发入口通过 DSH Connection 的 `admit` 验证宿主认证和来源，不能以任意 Cookie 或自定义请求头绕过。DSH 桌面壳会移除自定义浏览器 Cookie，因此 Hindsight 的登录／语言 Cookie 保存在服务端的临时会话中，不依赖浏览器保存或回传它们，也不把 DSH 凭据、API 密钥转发给 Hindsight。临时会话按 DSH 认证 Cookie、控制台地址和管理凭据的摘要隔离，最多保留 64 组；不持久化，也不保存记忆正文。重启或会话被淘汰后，已配置的自动登录会在重新打开入口时恢复；未配置则手动登录。退出原生控制台会清除对应的登录 Cookie，并保留手动登录，直到重新打开或重载入口。原生服务每次验证令牌的 HMAC 与签发时间，24 小时有效期不会因代理缓存而延长。自动登录请求不跟随重定向，并合并同一会话的并发登录；失败时保留原有错误说明或手动登录入口。
+
+控制台必须按 Hindsight 的子路径部署方式，以 `NEXT_PUBLIC_BASE_PATH=/orchestrator/hindsight` **构建**，并在管理页面地址中填写该路径下的 `/dashboard`。仅给已构建的根路径镜像添加运行时变量无法修改 Next.js 静态资源与路由。使用官方 Dockerfile 可指定 `--build-arg NEXT_PUBLIC_BASE_PATH=/orchestrator/hindsight --target cp-only`；记忆 API 可继续使用原地址。转发保留完整路径，重写控制台跳转，并拒绝跨站请求；不提供任意目标代理。Superagent 此处只管理连接，不提供 Hindsight 服务启停或模型配置。
 
 Hindsight 1.2.0 的语言路由匹配会跳过子路径根入口；Superagent 将该入口转发到子路径下的 `/dashboard`，避免根入口返回 404，后续登录及管理路由仍由原生控制台处理。
 

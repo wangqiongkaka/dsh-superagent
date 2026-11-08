@@ -22,7 +22,7 @@ type Delivery = 'injected' | 'pending'
 
 export interface Api {
   'GET memory': { response: { config: ReturnType<Memories['view']>; scopes: MemoryScope[] } }
-  'PUT memory/config': { body: MemoryConfig & { hindsightApiKey?: string }; response: ReturnType<Memories['view']> }
+  'PUT memory/config': { body: MemoryConfig & { hindsightApiKey?: string; hindsightConsoleKey?: string | null }; response: ReturnType<Memories['view']> }
   'GET state': { response: StateView }
   'POST master/rebuild': { body: { masterId: string }; response: { masterId: string } }
   'GET overview': { response: OverviewView }
