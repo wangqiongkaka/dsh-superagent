@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { Context } from '@deepseek-ai/cordis'
 import { bindScopeParent } from '@deepseek-ai/dsh-scope'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -19,7 +21,7 @@ import { SCHEMA_VERSION, Store } from '../src/app/store.ts'
 import { TextCache } from '../src/app/cache.ts'
 import { KV } from '../src/kv.ts'
 import { SettingsSchema, policyVersion, type SettingsOrigin } from '../src/policy.ts'
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind, pollRound } from '../src/sources/github.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
@@ -822,6 +824,39 @@ it('keeps pages of Source reads, prompt previews and Feishu message links in mem
   const { previews } = await runTool(runtime.masterId, 'orchestrator_prompts_save', { config, preview: true }) as { previews: { read: string }[] }
   expect(await runTool(runtime.masterId, 'orchestrator_read', { resource: previews[0]!.read, offset: 4000 })).toMatchObject({ offset: 4000 })
   expect(runtime.store.keys('').filter(name => /-read:|source-link:|prompt-preview\//.test(name))).toEqual([])
+})
+
+it('passes the configured Feishu CLI to the process and both native Session prompts', async () => {
+  const { ticket, sessionId } = await acceptedTicket()
+  expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe(runtime.deployment.feishu!.cli)
+  expect(runtime.ticketEnvironment(ticket).find(value => value.key === 'DSH_SUPERAGENT_FEISHU_CLI')?.value).toBe(BOT())
+  for (const id of [runtime.masterId, sessionId]) {
+    expect(sections.get(id)!.text({})).toContain(`DSH_SUPERAGENT_FEISHU_CLI = ${JSON.stringify(BOT())}`)
+  }
+})
+
+it.skipIf(!existsSync('/bin/zsh'))('uses the configured bot after zsh startup replaces PATH with an unconfigured CLI', async () => {
+  const dotdir = join(directory, 'shell'); mkdirSync(dotdir)
+  const other = join(dotdir, 'lark-cli')
+  writeFileSync(other, '#!/bin/sh\necho unconfigured\n', { mode: 0o755 })
+  writeFileSync(BOT(), '#!/bin/sh\necho bot:"$*"\n')
+  writeFileSync(join(dotdir, '.zshenv'), `export PATH='${dotdir}:/usr/bin:/bin'\n`)
+  const { stdout } = await promisify(execFile)('/bin/zsh', ['-lc',
+    'command -v lark-cli; "$DSH_SUPERAGENT_FEISHU_CLI" im +messages-resources-download --as bot'],
+    { env: { ...process.env, ZDOTDIR: dotdir }, timeout: 10000 })
+  expect(stdout.trim().split('\n')).toEqual([other, 'bot:im +messages-resources-download --as bot'])
+})
+
+it('clears an inherited Feishu CLI without a bot and restores it when stopped', async () => {
+  await runtime.stop()
+  vi.stubEnv('DSH_SUPERAGENT_FEISHU_CLI', '/operator/other-bot')
+  try {
+    const next = await restart({}, { feishu: null }); await next.ready
+    expect(next.configured()).toBe(true)
+    expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe('')
+    await next.stop()
+    expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe('/operator/other-bot')
+  } finally { vi.unstubAllEnvs() }
 })
 
 it('reads resources recorded under the pre-vocabulary names', async () => {

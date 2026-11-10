@@ -223,6 +223,7 @@ Setup verifies the GitHub repository and the agent's push access, writes the wor
 The process environment that setup writes:
 
 - **Command shims** in `<stateDir>/worker-bin`, first on `PATH`: `gh` runs the agent's CLI; `lark-cli` runs the bot's CLI; blocked commands fail. A shim removes its own directory from `PATH` before it runs its target.
+- **Feishu CLI path** in `DSH_SUPERAGENT_FEISHU_CLI`: the resolved absolute path of the configured bot CLI, also shown in Session instructions. Invoke it as `"$DSH_SUPERAGENT_FEISHU_CLI"` so shell startup (for example NVM in `.zshenv`) cannot redirect Feishu calls through another CLI on `PATH`. The value is empty without a working bot and is restored when Superagent stops.
 - **git configuration** in `<stateDir>/worker-gitconfig`: replaces the operator's global and system git configuration. It selects the agent CLI as the github.com credential helper, rewrites GitHub SSH addresses to HTTPS and defines Git LFS filters. Personal git settings such as an HTTP proxy do not apply. No commit identity is set here, git never prompts for credentials, and `GH_TOKEN` and `GITHUB_TOKEN` are removed.
 
 A file in `worker-bin` or `worker-gitconfig` that dsh-superagent did not write stops setup. A Ticket directory inside a git repository whose own configuration adds credentials fails the Ticket.

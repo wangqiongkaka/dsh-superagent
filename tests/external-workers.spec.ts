@@ -75,7 +75,7 @@ it('does not mark linking complete when the provider fails, allowing an explicit
 
 it.each(['codex', 'claude-code'] as const)('runs new %s tickets with scoped tools, keeps the main Session native and preserves the ticket Harness', async harness => {
   h = await startRuntime()
-  type Managed = { owner: string; harness: string; context?: () => Promise<{ instructions: string; mcpServers: WorkerMcpServer[] }> }
+  type Managed = { owner: string; harness: string; context?: () => Promise<{ instructions: string; environment: Record<string, string | undefined>; mcpServers: WorkerMcpServer[] }> }
   const managed = new Map<string, Managed>()
   const bridge = { manageSession: vi.fn(async (id: string, options: Managed) => { managed.set(id, options) }),
     releaseManagedSession: vi.fn(async () => {}) }
@@ -91,6 +91,10 @@ it.each(['codex', 'claude-code'] as const)('runs new %s tickets with scoped tool
   expect(context.instructions).toContain('dsh-superagent prompt revision')
   expect(context.instructions).toContain('orchestrator_report')
   expect(context.instructions).toContain('dsh-superagent-feishu')
+  const cli = h.runtime.deployment.feishu!.cli
+  expect(context.environment.DSH_SUPERAGENT_FEISHU_CLI).toBe(cli)
+  expect(context.instructions).toContain(`DSH_SUPERAGENT_FEISHU_CLI = ${JSON.stringify(cli)}`)
+  expect(context.instructions).toContain('"$DSH_SUPERAGENT_FEISHU_CLI"')
   const current = h.runtime.store.settings()
   h.runtime.store.saveSettings({ ...current, executor: { ...current.executor, harness: 'dsh' } })
   await h.runtime.sessions.ensure(sessionId, ticket.execution!.directory, ticket.title, 'worker')
