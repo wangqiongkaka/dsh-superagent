@@ -26,8 +26,6 @@ import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
 import { Store } from './store.ts'
-import { Memories } from './memory.ts'
-import { memoryTools } from './tools/memory.ts'
 import { evalsHealth } from './views/overview.ts'
 import { TextCache } from './cache.ts'
 import { Effects } from './effects.ts'
@@ -61,7 +59,6 @@ const now = (): string => new Date().toISOString()
  */
 export class Runtime extends Service implements SourceHost {
   readonly store: Store
-  readonly memory: Memories
   readonly setup: Setup
   readonly prompts: Prompts
   readonly effects: Effects
@@ -102,7 +99,6 @@ export class Runtime extends Service implements SourceHost {
     try {
       const report = (error: unknown) => { ctx.logger.warn('dsh-superagent: %s', String(error)) }
       const store = opened = this.store = new Store(join(machine.stateDir, 'orchestrator.sqlite'), report)
-      const memory = this.memory = new Memories(store, this.lifetime)
       const setup = this.setup = new Setup({ context: ctx, machine, lifetime: this.lifetime, restart })
       const deployed = () => setup.configured()
         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
@@ -127,8 +123,8 @@ export class Runtime extends Service implements SourceHost {
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), get masterId() { return runtime.masterId },
         lifetime: this.lifetime,
-        closing: () => this.closing(), rebuilding: () => !!this.rebuilding, environment, memoryContext: ticket => memory.context(ticket),
-        tools: (agent, ticket) => [...(ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent)), ...memoryTools(memory, ticket?.id)] })
+        closing: () => this.closing(), rebuilding: () => !!this.rebuilding, environment,
+        tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
@@ -279,7 +275,7 @@ export class Runtime extends Service implements SourceHost {
   private httpHost(): HttpHost {
     const runtime = this
     const { store, sources, prompts, sessions, settings, engine, executor, health, machine, ready, sourceLinks, setup, passes } = this
-    return { store, memory: this.memory, sources, prompts, sessions, settings, engine, executor, health, machine, get masterId() { return runtime.masterId }, ready, sourceLinks,
+    return { store, sources, prompts, sessions, settings, engine, executor, health, machine, get masterId() { return runtime.masterId }, ready, sourceLinks,
       get deployment() { return setup.deployment },
       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),

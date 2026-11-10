@@ -41,7 +41,6 @@ export interface SessionsHost {
   rebuilding(): boolean
   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
   environment(ticket: Ticket): Variable[]
-  memoryContext?(ticket?: Ticket): string
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
 }
@@ -419,7 +418,7 @@ export class Sessions {
   private instructions(agent: Agent, record: boolean): string {
     const version = this.promptFor(agent, record), ticket = this.ticketOf(agent)
     const role = this.bindings.get(agent)?.master ? 'orchestrator' : 'worker'
-    return `[dsh-superagent prompt revision ${version.revision}]\n${this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? mandateInstructions(ticket.mandate) : ''}${this.host.memoryContext?.(ticket) ?? ''}`
+    return `[dsh-superagent prompt revision ${version.revision}]\n${this.host.prompts.compose(version.config, role, ticket ? this.host.environment(ticket) : undefined)}\n${ticket ? mandateInstructions(ticket.mandate) : ''}`
   }
   /** Ends a native worker process once its own final report has returned, or immediately for a cancellation. */
   async endWorker(sessionId: string, assignment: string, ownTurn: boolean): Promise<void> {

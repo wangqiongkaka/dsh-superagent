@@ -98,8 +98,9 @@ it.each(['codex', 'claude-code'] as const)('runs new %s tickets with scoped tool
   const server = context.mcpServers[0]!
   const listed = await fetch(server.url, { method: 'POST', headers: { authorization: server.headers[0]!.value },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })
-  expect((await listed.json()).result.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining([
-    'orchestrator_memory_read', 'orchestrator_memory_propose', 'orchestrator_memory_forget']))
+  const names: string[] = (await listed.json()).result.tools.map((tool: { name: string }) => tool.name)
+  expect(names).toContain('orchestrator_report')
+  expect(names.some(name => name.startsWith('orchestrator_memory_'))).toBe(false)
   const call = (args: unknown) => fetch(server.url, { method: 'POST', headers: { authorization: server.headers[0]!.value },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orchestrator_report', arguments: args } }) })
   const response = await call({ state: 'blocked', summary: '等待确认', human_action: '按钮应该使用哪种颜色？' })

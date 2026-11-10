@@ -316,8 +316,6 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/core/ids.ts` | `key`: ids derived from their inputs, equal for equal inputs |
 | `src/core/memory.ts` | `MemoryRepositories`: the Store's repositories in memory, in the Store's order and with its nested rollback, for domain tests |
 | `src/core/index.ts` | The core's exports |
-| `src/app/memory.ts`, `src/app/hindsight.ts`, `src/app/tools/memory.ts` | 项目/群授权、来源原文直达 Hindsight、原生事实检索及删除保护 |
-| `src/client/memory.tsx` | Hindsight 连接配置及原生记忆管理入口 |
 | `src/app/runtime.ts` | The Runtime, the composition root, with its start and stop |
 | `src/app/setup.ts` | Setup, and `setupChanged`, whether a save changes a field setup reads |
 | `src/app/passes.ts` | Passes, the pass scheduler |
@@ -350,7 +348,6 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `src/app/tools/main.ts` | The main Session's tools |
 | `src/app/tools/executor.ts` | An Executor Session's tools |
 | `src/app/http.ts` | The `/orchestrator/api` routes: the same-origin check, request limits and one status per kind of failure |
-| `src/app/memory-console.ts` | Hindsight 原生控制台的同源流式转发、DSH 宿主认证、服务端原生会话隔离与子路径跳转 |
 | `src/app/api.ts` | `Api`, every route with its parameters, query, body and response, and the filters of the lists; it imports only types, so the panel bundles it |
 | `src/app/views/text.ts` | The two forms of a view's text: `preview`, plain text on one line, and `markdown` without HTML; `plain` and `readable` |
 | `src/app/views/records.ts` | The rows the views share: Triggers, Tickets, Threads, Decisions and Channel links, and `ownersOf`, the owners of follow-ups as one request reads them |
@@ -440,13 +437,11 @@ Some generic modules still refer directly to GitHub or Feishu:
 | `tests/external-tools.spec.ts` | External worker MCP authentication, argument validation and Assignment revocation |
 | `tests/external-workers.spec.ts` | Codex and Claude Code worker selection, the native main Session, scoped reports, missing-provider failure and panel-only selection |
 | `tests/retry-health.spec.ts`, `tests/role-models.spec.ts` | Model budget retries, and the models of the two roles |
-| `tests/memory.spec.ts`, `tests/panel-memory.spec.tsx` | Hindsight 原生来源直写、默认群范围、显式项目共享、原生记忆召回及并发删除保护 |
 | `tests/runtime.spec.ts` | The whole application on a simulated DeepSeek Harness host, through tools and HTTP |
 | `tests/master-rebuild.spec.ts` | 主会话重建、评估恢复、运行中拒绝、创建失败回退、并发投递和旧会话派工拦截 |
 | `tests/tools.spec.ts` | The Sessions' tools: what `orchestrator_read` reads for each role, and the shapes and checks of the other main Session tools |
 | `tests/runtime-concurrency.spec.ts` | Work that overlaps: Triggers during a pass, Tickets that change during deliveries and launches |
 | `tests/http.spec.ts` | The same-origin and loopback checks, the status of each kind of failure, the body limit, path parameters and queries |
-| `tests/memory-console.spec.ts` | 远程控制台访问、跨站拦截、原生请求转发、Cookie 隔离、跳转及后端断连 |
 | `tests/settings.spec.ts` | Settings saves that race a model or account check, a Policy sync that a save outran, and the refusals of the pause, a sync and a block |
 | `tests/views.spec.ts` | What the management views derive from the Store, such as the Thread a dropped message belongs to |
 | `tests/timeline.spec.ts` | A Thread's pages and a Trigger's neighbours by time and then id, with every received Trigger's time in one form |

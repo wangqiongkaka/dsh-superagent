@@ -27,10 +27,6 @@
 .dt-page .dt-tabs { overflow-x: auto; display: flex; gap: 20px; max-width: none; padding: 0; border-radius: 0; background: none; border-bottom: 0.5px solid var(--dsw-alias-border-l3); }
 .dt-segmented { width: 100%; max-width: 420px; box-sizing: border-box; display: inline-grid; gap: 2px; padding: 3px; border-radius: 9px; background: var(--dsw-alias-interactive-bg-hover); }
 .dt-form.dt-block { padding: 16px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; gap: 16px; }
-.dt-memory-settings > summary { cursor: pointer; color: var(--dsw-alias-label-secondary); font-weight: 500; }
-.dt-memory-settings > summary:focus-visible { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 2px; border-radius: 4px; }
-.dt-memory-settings[open] > summary { margin-bottom: 12px; }
-.dt-memory-console { display: block; box-sizing: border-box; width: 100%; min-width: 0; height: 72dvh; min-height: 560px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
 .dt-block-title { display: flex; align-items: center; gap: 4px; margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
 .dt-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .dt-section-title { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--dsw-alias-label-secondary); }

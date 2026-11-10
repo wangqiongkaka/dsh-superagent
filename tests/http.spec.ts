@@ -1,13 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { registerHttp } from '../src/app/http.ts'
 import { PromptConflict } from '../src/app/prompts.ts'
-import { Memories } from '../src/app/memory.ts'
-import { KV } from '../src/kv.ts'
-import { Store } from '../src/app/store.ts'
 import { SettingsConflict } from '../src/app/settings.ts'
 import type { HttpHost } from '../src/app/http.ts'
 import { SettingsSchema } from '../src/policy.ts'
@@ -25,9 +19,9 @@ function serve(runtime: Partial<Record<keyof HttpHost, unknown>>, host = '127.0.
     const chunks = body === undefined ? [] : [Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]
     const sent = Object.fromEntries(Object.entries({ host: '127.0.0.1:3082', 'x-orchestrator-request': '1', ...headers }).filter(([,
       value]) => value !== undefined))
-    const req = { method, url: `/orchestrator/api/${path}`, headers: sent, async *[Symbol.asyncIterator]() { yield* chunks } }
+    const req = { method, url: path.startsWith('/') ? path : `/orchestrator/api/${path}`, headers: sent, async *[Symbol.asyncIterator]() { yield* chunks } }
     await handler(req, { setHeader: () => {}, writeHead: (code: number) => { status = code }, end: (data: string) => { text = data } })
-    return { status, body: JSON.parse(text) as Record<string, unknown> }
+    return { status, body: JSON.parse(text || '{}') as Record<string, unknown> }
   }
 }
 
@@ -135,25 +129,10 @@ it('validates and forwards ignored-file confirmation', async () => {
   expect(requests).toEqual([['t1', ignored]])
 })
 
-it('configures only Hindsight, keeps credentials private, removes legacy settings and exposes no duplicate memory CRUD', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'memory-http-'))
-  const store = new Store(join(directory, 'state.sqlite'))
-  try {
-    const memory = new Memories(store, new AbortController().signal)
-    const call = serve({ memory })
-    store.set(KV.memory.legacySecret, 'test-old-screening-key')
-    expect((await call('PUT', 'memory/config', { ...memory.config(), enabled: true, hindsightApiKey: 'test-hindsight-private', hindsightConsoleKey: 'test-ui-private' })).status).toBe(200)
-    const result = await call('GET', 'memory')
-    expect(result.body.config).toMatchObject({ enabled: true, configured: true, consoleConfigured: true, revision: 1 })
-    expect(JSON.stringify(result)).not.toContain('test-hindsight-private')
-    expect(JSON.stringify(result)).not.toContain('test-ui-private')
-    expect(store.get(KV.memory.legacySecret)).toBeUndefined()
-    expect(result.body.config).not.toHaveProperty('model'); expect(result.body.config).not.toHaveProperty('threshold')
-    expect((await call('PUT', 'memory/config', { ...memory.config(), revision: 0 })).status).toBe(409)
-    expect((await call('PUT', 'memory/config', { ...memory.config(), threshold: .9 })).status).toBe(400)
-    expect((await call('PUT', 'memory/config', { ...memory.config(), apiKey: 'old-key' })).status).toBe(400)
-    expect((await call('PUT', 'memory/config', { ...memory.config(), hindsightUrl: 'not-a-url' })).status).toBe(400)
-    for (const [method, path, body] of [['PUT', 'memory/m', {}], ['DELETE', 'memory/m', {}], ['GET', 'memory/m/history', undefined]] as const)
-      expect((await call(method, path, body)).status).toBe(404)
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }) }
+it('returns 404 for removed shared memory endpoints', async () => {
+  const call = serve({})
+  for (const [method, path, body] of [['GET', 'memory', undefined], ['PUT', 'memory/config', {}],
+    ['DELETE', 'memory/m', {}], ['GET', 'memory/m/history', undefined],
+    ['GET', '/orchestrator/hindsight/', undefined], ['POST', '/orchestrator/hindsight/api/auth/login', {}]] as const)
+    expect((await call(method, path, body)).status).toBe(404)
 })

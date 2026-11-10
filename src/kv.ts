@@ -6,7 +6,6 @@ import type { PromptVersion } from './app/prompts.ts'
 import type { SettingsVersion } from './app/store.ts'
 import type { SettingsSave } from './policy.ts'
 import type { Retry } from './sources/github.ts'
-import type { MemoryConfig } from './app/memory.ts'
 
 /** Key of a KV record whose value has type `V`; a plain string represents an untyped key. */
 export type Key<V> = string & { readonly __value?: V }
@@ -20,10 +19,6 @@ export function family<V, A extends unknown[] = [string]>(prefix: string, format
 }
 
 export const KV = {
-  memory: { config: record<MemoryConfig>('memory-config'), hindsightSecret: record<string>('memory-hindsight-key'),
-    consoleSecret: record<{ origin: string; key: string }>('memory-console-key'),
-    /** Removed screening credential; only used to erase the legacy secret when saving new connection settings. */
-    legacySecret: record<string>('memory-api-key'), purged: family<number>('memory-purged:') },
   /** Store: current database schema version. */
   store: { schema: record<number>('schema') },
   /** Settings: current revision, per-block revision, and saved settings snapshots (including the current one). */

@@ -32,7 +32,7 @@ Read the numbered documents in order; each builds only on the ones before it.
 - [007 Architecture](docs/007-architecture.md)
 - [008 Cookbook](docs/008-cookbook.md): adding a Source
 
-- [010 项目与群共享记忆](docs/010-shared-memory.md)：Jev 筛选、跨会话共享与审核
+- [010 记忆集成边界](docs/010-shared-memory.md)：由 Harness 插件管理记忆，保留旧数据
 
 ## Development
 

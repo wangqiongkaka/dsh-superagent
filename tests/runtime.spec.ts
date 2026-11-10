@@ -1872,12 +1872,10 @@ it('removes only the cleaned workspace registration and permits retry after regi
   expect(deleteWorkspace).toHaveBeenCalledTimes(2)
 })
 
-it('registers shared memory tools for main and worker Sessions and updates their prompts when enabled', async () => {
+it('leaves shared memory to the host without registering duplicate tools or prompts', async () => {
   const { sessionId } = await acceptedTicket()
   for (const id of [runtime.masterId, sessionId]) {
-    for (const name of ['orchestrator_memory_read', 'orchestrator_memory_propose', 'orchestrator_memory_forget']) expect(tools.get(id)?.has(name)).toBe(true)
-    expect(await runTool(id, 'orchestrator_memory_read', { query: '项目约定' })).toEqual({ scopes: [], items: [], degraded: false })
+    expect([...tools.get(id)!.keys()].some(name => name.startsWith('orchestrator_memory_'))).toBe(false)
+    expect(sections.get(id)!.text({})).not.toContain('orchestrator_memory_')
   }
-  runtime.memory.configure({ ...runtime.memory.config(), enabled: true, hindsightApiKey: 'test-hindsight-only' })
-  for (const id of [runtime.masterId, sessionId]) expect(sections.get(id)!.text({})).toContain('orchestrator_memory_propose')
 })

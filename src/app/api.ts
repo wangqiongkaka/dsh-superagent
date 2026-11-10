@@ -1,5 +1,4 @@
 /** Type-only management API contract between the web panel and host routes, imported by the panel without bundling host code. */
-import type { Memories, MemoryConfig, MemoryScope } from './memory.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { HarnessCatalog } from './harness.ts'
 import type { PromptConfig, Prompts } from './prompts.ts'
@@ -13,7 +12,6 @@ import type { TicketListView } from './views/tickets.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
-export const MEMORY_CONSOLE_PATH = '/orchestrator/hindsight'
 export type TicketFilter = typeof TICKET_FILTERS[number]
 export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }
@@ -21,8 +19,6 @@ interface Paged { offset?: number; limit?: number }
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
-  'GET memory': { response: { config: ReturnType<Memories['view']>; scopes: MemoryScope[] } }
-  'PUT memory/config': { body: MemoryConfig & { hindsightApiKey?: string; hindsightConsoleKey?: string | null }; response: ReturnType<Memories['view']> }
   'GET state': { response: StateView }
   'POST master/rebuild': { body: { masterId: string }; response: { masterId: string } }
   'GET overview': { response: OverviewView }
