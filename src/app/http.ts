@@ -175,6 +175,7 @@ function routes(runtime: HttpHost): Routes {
       if (!detail) throw new RouteError(404, 'Thread not found')
       return detail
     },
+    'POST threads/:key/delete': ({ params }) => { runtime.engine.deleteThread(params.key); return { deleted: true } },
     'POST threads/:key/unsubscribe': async ({ params }) => {
       const removed = runtime.engine.unsubscribe(params.key)
       return { removed, thread: params.key, context_delivery: await runtime.sessions.delivery(`subscription:${params.key}`) }
@@ -190,6 +191,7 @@ function routes(runtime: HttpHost): Routes {
       return decisionList(views(runtime), kind.split(',').filter(Boolean), offset, limit, since)
     },
     'POST decisions/:id/dismiss': ({ params }) => { runtime.engine.dismiss(params.id); return { dismissed: true } },
+    'POST decisions/:id/delete': ({ params }) => { runtime.engine.deleteDecision(params.id); return { deleted: true } },
     'GET tickets': ({ query }) => {
       const { state, offset, limit } = TicketsQuery.parse(query)
       return ticketList(views(runtime), state, offset, limit)

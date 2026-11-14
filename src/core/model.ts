@@ -57,6 +57,8 @@ export interface TriggerDisposition {
   handbacks?: { ticketId: string; reason: string; at: string }[]
   /** The tickets whose Executor acknowledged it or answered it, taking it up as within the ticket. */
   acked?: string[]
+  /** A person deleted it from the panel: neither an Eval nor the main Session decides it any more, until a person sends it to Eval again. */
+  deleted?: true
   at: string
 }
 /** What deciding a follow-up's owners reads: the stored tickets, Threads and dispositions, as the Store and the core keep them. */
@@ -174,6 +176,8 @@ export interface Thread {
   evaluating?: Evaluation
   /** How many Evals of its queued Triggers expired in a row, each of which queued them again; a Decision clears it. */
   expired?: number
+  /** When a person deleted the Thread from the panel's lists; a new Trigger on it lists it again. */
+  deletedAt?: string
   /**
    * Source-native attributes needed by channels or readers (for example a Feishu thread id). Its Source may also describe
    * the thread for people: `label`, a display name, and `facts`, a {@link ThreadFacts} map.
@@ -206,6 +210,8 @@ export interface Decision {
   audit?: Record<string, unknown>
   /** A person dismissed the problem an unavailable Decision shows. */
   dismissed?: true
+  /** A person deleted it from the panel's lists. */
+  deleted?: true
 }
 
 export type AssignmentState = 'pending' | 'running' | 'ended'

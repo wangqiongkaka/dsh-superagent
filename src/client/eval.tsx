@@ -15,7 +15,7 @@ import { Hint, LabelValue, LoadMore, LoadState, Section, StatusHead } from './wi
 export function EvalStatus({ filter, window, paused }: { filter: DecisionFilter; window: '24h' | undefined; paused: boolean }) {
   const { t, call, navigate } = usePanel()
   const [limit, setLimit] = useState(30)
-  const { data, error } = usePoll(() => call('GET decisions', { query: { limit, kind: DECISION_KINDS[filter],
+  const { data, error, reload } = usePoll(() => call('GET decisions', { query: { limit, kind: DECISION_KINDS[filter],
     ...window ? { window } : {} } }), [filter, limit, window])
   const show = (key: DecisionFilter, last24h: boolean) => navigate({ page: 'eval', query: { ...key === 'work' ? {} : { filter: key },
     ...last24h ? { window: '24h' } : {} } }, true)
@@ -33,7 +33,7 @@ export function EvalStatus({ filter, window, paused }: { filter: DecisionFilter;
     </div>
     <LoadState error={error} loading={!data} />
     {data && (data.items.length ? <ul className="dt-list">{data.items.map(decision => <DecisionLine key={decision.id}
-      decision={decision} />)}</ul> : <Hint>{t('none')}</Hint>)}
+      decision={decision} onChanged={reload} />)}</ul> : <Hint>{t('none')}</Hint>)}
     {data?.next_offset != null && <LoadMore onMore={() => setLimit(limit + 30)} />}
   </>
 }

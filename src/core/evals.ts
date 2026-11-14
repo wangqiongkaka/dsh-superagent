@@ -131,6 +131,7 @@ export class Evals extends EnginePart {
   decide(triggerId: string, outcome: Outcome): Decision {
     const trigger = this.repo.triggers.get(triggerId)
     if (!trigger) throw new UserError('unknownTrigger')
+    if (this.repo.triggers.disposition(triggerId)?.deleted) throw new UserError('deletedTrigger')
     const held = this.holding(triggerId)
     if (outcome.evalId && held?.evaluating?.id !== outcome.evalId) throw new UserError('evalFinished', { eval: outcome.evalId })
     // Prevent a replayed trigger that already created a ticket from spawning a second one.
@@ -169,7 +170,8 @@ export class Evals extends EnginePart {
     if (!trigger) throw new UserError('unknownTrigger')
     if (this.holding(triggerId)) return false
     this.queueForEval(trigger)
-    const disposition = this.repo.triggers.disposition(triggerId) ?? { fanout: [], at: this.now() }
+    // A person's re-evaluation takes back an earlier deletion.
+    const { deleted: _deleted, ...disposition } = this.repo.triggers.disposition(triggerId) ?? { fanout: [], at: this.now() }
     this.repo.triggers.saveDisposition(triggerId, { ...disposition, requeued: true })
     return true
   }
@@ -196,6 +198,57 @@ export class Evals extends EnginePart {
     decision.dismissed = true
     this.repo.decisions.save(decision)
     return decision
+  }
+  /**
+   * A person deletes a Decision from the panel: the lists show it no more, and its Triggers leave their Thread's queue and
+   * are decided no more.
+   * @throws UserError when the Decision is unknown, its ticket is open, or an Eval in progress holds its Triggers.
+   */
+  deleteDecision(decisionId: string): Decision {
+    const decision = this.repo.decisions.get(decisionId)
+    if (!decision) throw new UserError('unknownDecision')
+    this.closedTickets(decision.ticketId ? [decision.ticketId] : [])
+    const thread = this.repo.threads.get(decision.threadKey)
+    if (thread?.evaluating?.triggerIds.some(id => decision.triggerIds.includes(id))) throw new UserError('evaluatingNow')
+    if (thread?.pending.some(id => decision.triggerIds.includes(id))) {
+      thread.pending = thread.pending.filter(id => !decision.triggerIds.includes(id))
+      this.repo.threads.save(thread)
+    }
+    this.deleteDecisions([decision])
+    return decision
+  }
+  /**
+   * A person deletes a Thread from the panel: the lists show neither it nor its Decisions, its queue empties, an Eval in
+   * progress ends, and none of its Triggers is decided any more. A new Trigger on it lists it again.
+   * @throws UserError when the Thread is unknown or a ticket subscribed to it is open.
+   */
+  deleteThread(threadKeyValue: string): void {
+    const thread = this.repo.threads.get(threadKeyValue)
+    if (!thread) throw new UserError('unknownThread')
+    this.closedTickets(thread.subscriptions)
+    const queued = [...thread.pending]
+    if (thread.evaluating) this.finish(thread, thread.evaluating, { kind: 'ignore', reason: [{ code: 'deleted' }] })
+    thread.pending = []
+    thread.deletedAt = this.now()
+    this.repo.threads.save(thread)
+    const decisions = this.repo.decisions.byThread(thread.key)
+    this.deleteDecisions(decisions)
+    for (const id of queued) this.deleteTrigger(id)
+  }
+  /** Refuse to delete while any of `ticketIds` is open: its work goes on, so a person stops it first. */
+  private closedTickets(ticketIds: string[]): void {
+    const open = ticketIds.flatMap(id => { const ticket = this.repo.tickets.get(id); return ticket && liveTicket(ticket) ? [ticket.title] : [] })
+    if (open.length) throw new UserError('openTicketHere', { tickets: open.join(', ') })
+  }
+  private deleteDecisions(decisions: Decision[]): void {
+    for (const decision of decisions) {
+      if (!decision.deleted) { decision.deleted = true; this.repo.decisions.save(decision) }
+      for (const id of decision.triggerIds) this.deleteTrigger(id)
+    }
+  }
+  private deleteTrigger(triggerId: string): void {
+    const disposition = this.repo.triggers.disposition(triggerId) ?? { fanout: [], at: this.now() }
+    if (!disposition.deleted) this.repo.triggers.saveDisposition(triggerId, { ...disposition, deleted: true })
   }
   /** Take a Trigger out of its Thread's queue because it was routed by hand. */
   withdraw(trigger: Trigger): void {

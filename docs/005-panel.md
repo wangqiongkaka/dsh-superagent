@@ -31,6 +31,8 @@ A dropped message links to its Ticket, or to its Thread when it has no Ticket. T
 
 A human follow-up still owned by an Executor is marked **Delivered to Ticket**, without an Eval. The Thread also shows hand-back reasons and context-only Subscriptions. **Evaluate again** can send that follow-up to Eval, or retry a Trigger with no effective judgement: one filtered by its Source, an unavailable Eval, or a delivered message with neither a non-stop Decision nor an Executor acknowledgement.
 
+**Delete** on a Trigger or Eval list row hides a Thread or Decision that needs neither showing nor further work, after confirmation. Deleting a Thread also hides its Decisions, empties its queue and ends its running Eval. Deleting a Decision takes its Triggers out of the queue. Afterwards neither Eval nor the main Session decides the deleted Triggers, and the overview stops listing them. The records stay stored for deduplication and audit, and search still finds them. A Thread or Decision whose Ticket is open cannot be deleted; stop the Ticket on the Execution page first. A Decision whose Triggers are being evaluated cannot be deleted either. A new message lists a deleted Thread again, and **Evaluate again** sends a deleted Trigger to Eval again.
+
 Ticket details show the originating Trigger, Decision and reason, scope and Policy version. Assignments and secondary details are folded below the immediate actions. **Retry** is available for failed Input delivery or a Ticket waiting for a person after a blocked or failed Report. Ended Tickets show outcomes such as **Pull request merged** or **Stopped by a person**.
 
 ## Settings groups

@@ -1211,6 +1211,69 @@ describe('problems', () => {
     expect(h.repo.decisions.get(unavailable.id)).toMatchObject({ dismissed: true })
   })
 })
+describe('deleting from the panel', () => {
+  const accept = { kind: 'accept', title: 'Redo', scope: 'small', reason: 'asked again', acknowledgement: 'ok' } as const
+  it('deletes a Decision whose Eval was unavailable, so the main Session can neither accept nor attach its Trigger', () => {
+    const h = harness()
+    receiveAndRoute(h, trigger('1', { threads: [{ source: 'chat', id: 't2' }] })); h.pump()
+    const unavailable = h.decide(h.requests.at(-1)!, { kind: 'unavailable', reason: 'timed out' })
+    // Without the deletion, the main Session could still accept the same request directly.
+    receiveAndRoute(h, trigger('2', { threads: [{ source: 'chat', id: 't3' }] })); h.pump()
+    const kept = h.decide(h.requests.at(-1)!, { kind: 'unavailable', reason: 'timed out' })
+    expect(h.engine.decide(kept.triggerIds[0]!, accept)).toMatchObject({ kind: 'accept' })
+    expect(h.engine.deleteDecision(unavailable.id)).toMatchObject({ deleted: true })
+    expect(h.repo.decisions.get(unavailable.id)).toMatchObject({ deleted: true })
+    expect(() => h.engine.decide('1', accept)).toThrow(new UserError('deletedTrigger'))
+    const ticketId = h.repo.tickets.list()[0]!.id
+    expect(() => h.engine.attach(ticketId, '1')).toThrow(new UserError('deletedTrigger'))
+    expect(h.repo.tickets.list()).toHaveLength(1)
+    // A person's re-evaluation takes the deletion back.
+    expect(h.engine.reevaluate('1')).toBe(true)
+    expect(h.repo.triggers.disposition('1')).not.toHaveProperty('deleted')
+  })
+  it('keeps a Decision whose ticket is open or whose Triggers an Eval holds', () => {
+    const h = harness()
+    const decision = accepted(h)
+    expect(() => h.engine.deleteDecision(decision.id)).toThrow(new UserError('openTicketHere', { tickets: 'Fix' }))
+    h.engine.stopTicket(decision.ticketId!)
+    expect(h.engine.deleteDecision(decision.id)).toMatchObject({ deleted: true })
+    expect(() => h.engine.deleteDecision('missing')).toThrow(new UserError('unknownDecision'))
+    receiveAndRoute(h, trigger('2', { threads: [{ source: 'chat', id: 't2' }] })); h.pump()
+    const unavailable = h.decide(h.requests.at(-1)!, { kind: 'unavailable', reason: 'model down' })
+    h.engine.reevaluate('2'); h.pump()
+    expect(() => h.engine.deleteDecision(unavailable.id)).toThrow(new UserError('evaluatingNow'))
+  })
+  it('deletes a Thread: its queue empties, its Eval ends deleted, its Decisions hide, and a new Trigger lists it again', () => {
+    const h = harness()
+    receiveAndRoute(h, trigger('1', { threads: [{ source: 'chat', id: 't2' }] })); h.pump()
+    const unavailable = h.decide(h.requests.at(-1)!, { kind: 'unavailable', reason: 'model down' })
+    receiveAndRoute(h, trigger('2', { threads: [{ source: 'chat', id: 't2' }] })); h.pump()
+    const evalId = h.requests.at(-1)!.evalId
+    receiveAndRoute(h, trigger('3', { threads: [{ source: 'chat', id: 't2' }] }))
+    expect(h.repo.threads.get('chat:t2')).toMatchObject({ evaluating: { id: evalId }, pending: ['3'] })
+    h.engine.deleteThread('chat:t2')
+    const thread = h.repo.threads.get('chat:t2')!
+    expect(thread).toMatchObject({ pending: [], deletedAt: expect.any(String) })
+    expect(thread).not.toHaveProperty('evaluating')
+    expect(h.assessor.release).toHaveBeenCalledWith(evalId)
+    const decisions = h.repo.decisions.byThread('chat:t2')
+    expect(decisions.map(item => [item.kind, item.deleted])).toEqual([['unavailable', true], ['ignore', true]])
+    expect(decisions[1]!.reason).toEqual([{ code: 'deleted' }])
+    expect(unavailable.triggerIds).toEqual(['1'])
+    for (const id of ['1', '2', '3']) expect(() => h.engine.decide(id, accept)).toThrow(new UserError('deletedTrigger'))
+    h.tick(5); receiveAndRoute(h, trigger('4', { threads: [{ source: 'chat', id: 't2' }] }))
+    expect(h.repo.threads.get('chat:t2')).not.toHaveProperty('deletedAt')
+  })
+  it('keeps a Thread while a ticket subscribed to it is open', () => {
+    const h = harness()
+    const { ticketId } = accepted(h)
+    expect(() => h.engine.deleteThread('chat:t1')).toThrow(new UserError('openTicketHere', { tickets: 'Fix' }))
+    expect(() => h.engine.deleteThread('chat:none')).toThrow(new UserError('unknownThread'))
+    h.engine.stopTicket(ticketId!)
+    h.engine.deleteThread('chat:t1')
+    expect(h.repo.decisions.byThread('chat:t1').every(item => item.deleted)).toBe(true)
+  })
+})
 describe('retry after a failed delivery', () => {
   it('starts a new Assignment for a ticket whose Input keeps failing to reach its worker, which takes the Input', () => {
     const h = harness()

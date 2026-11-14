@@ -10,7 +10,7 @@ import { feishuKind } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { snapshot, threadSummary, ticketSummary, triggerView, decisionView } from '../src/app/views/records.ts'
 import { basisFacts, ticketDetail } from '../src/app/views/tickets.ts'
-import { threadDetail } from '../src/app/views/threads.ts'
+import { decisionList, threadDetail, threadList } from '../src/app/views/threads.ts'
 import { droppedReplies, sourcesStatus } from '../src/app/views/sources.ts'
 import { overview } from '../src/app/views/overview.ts'
 import { settingsView } from '../src/app/views/settings.ts'
@@ -354,4 +354,38 @@ it('preserves read-only analysis intent in the decision shown by the panel', () 
   expect(decisionView(view, decision).direction).toEqual(direction)
   const { analysis_requested: _analysis, ...legacy } = direction
   expect(decisionView(view, { ...decision, audit: { direction: legacy } }).direction).toEqual(legacy)
+})
+
+it('lists neither deleted Decisions nor deleted Threads, counts no deleted Decision, and offers deletion only without open work', () => {
+  const host = views()
+  const key = 'feishu:oc_1:om_root'
+  store.triggers.save(message('e1', { source: 'feishu', id: 'ou_alice' }))
+  const decision = (id: string, kind: 'accept' | 'unavailable', fields = {}) => store.decisions.save({ id, evalId: id, threadKey: key,
+    triggerIds: ['e1'], policyVersion: 'v1', at, kind, reason: [{ code: 'timeout' }], strength: 'explicit', ...fields })
+  decision('d1', 'unavailable'); decision('d2', 'accept', { ticketId: 'k1' }); live('k1')
+  const thread = { key, ref: { source: 'feishu', id: 'oc_1:om_root' }, createdAt: at, lastAt: at, subscriptions: ['k1'], correlated: [],
+    pending: [], meta: {} }
+  store.threads.save(thread)
+  const listed = () => decisionList(host, [], 0, 30).items.map(item => [item.id, item.actions.delete])
+  expect(listed()).toEqual([['d2', false], ['d1', true]])
+  expect(threadList(host, 'all', 0, 20).items.map(item => [item.key, item.actions.delete])).toEqual([[key, false]])
+  expect(store.read.flow('')).toEqual({ judged: 1, accepted: 1 })
+  decision('d2', 'accept', { ticketId: 'k1', deleted: true })
+  expect(listed()).toEqual([['d1', true]])
+  expect(store.read.flow('')).toEqual({ judged: 1, accepted: 0 })
+  // An unavailable Decision, the latest on its Thread, is a problem on the overview until it is deleted.
+  store.threads.save({ key: 'github:9', ref: { source: 'github', id: '9' }, createdAt: at, subscriptions: [], correlated: [], pending: [], meta: {} })
+  store.decisions.save({ id: 'd9', evalId: 'd9', threadKey: 'github:9', triggerIds: ['e1'], policyVersion: 'v1', at, kind: 'unavailable',
+    reason: [{ code: 'timeout' }], strength: 'explicit' })
+  const unjudged = () => problems(host).filter(item => item.kind === 'eval-unavailable').length
+  expect(unjudged()).toBe(1)
+  store.decisions.save({ ...store.decisions.get('d9')!, deleted: true })
+  expect(unjudged()).toBe(0)
+  decision('d1', 'unavailable', { deleted: true })
+  expect(listed()).toEqual([])
+  store.threads.save({ ...thread, subscriptions: [], deletedAt: at })
+  expect(threadList(host, 'all', 0, 20).items.map(item => item.key)).toEqual(['github:9'])
+  // A deleted Thread with work on it again, such as a person's re-evaluation, is listed so the counts match.
+  store.threads.save({ ...thread, subscriptions: [], deletedAt: at, pending: ['e1'] })
+  expect(threadList(host, 'evaluating', 0, 20).items.map(item => item.key)).toEqual([key])
 })

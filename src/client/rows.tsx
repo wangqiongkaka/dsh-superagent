@@ -49,9 +49,24 @@ function ContextTag() {
   const { t } = usePanel()
   return <Tag tone="quiet" title={t('contextOnlyHint')}>{t('contextOnly')}</Tag>
 }
-/** Thread list row; on a Ticket page, `ticketId` omits that Ticket from fanout targets and `context` marks context-only threads. */
-export function ThreadLine({ thread, ticketId, context }: { thread: ThreadRow; ticketId?: string; context?: boolean }) {
-  const { t, navigate } = usePanel()
+/** A row's confirmed delete action, offered on list pages that reload through `onChanged`. */
+function DeleteButton({ title, message, request, onChanged }: {
+  title: string; message: string; request: () => Promise<unknown>; onChanged: () => Promise<void>
+}) {
+  const { t } = usePanel()
+  return <div className="dt-ticket-actions">
+    <ConfirmButton variant="outline" icon="trash" label={t('remove')} title={title} message={message}
+      onConfirm={async () => { await request(); await onChanged() }} />
+  </div>
+}
+/**
+ * Thread list row; on a Ticket page, `ticketId` omits that Ticket from fanout targets and `context` marks context-only threads.
+ * `onChanged` offers deletion and reloads the list after it.
+ */
+export function ThreadLine({ thread, ticketId, context, onChanged }: {
+  thread: ThreadRow; ticketId?: string; context?: boolean; onChanged?: () => Promise<void>
+}) {
+  const { t, call, navigate } = usePanel()
   const live = thread.tickets.filter(ticket => ticket.state === 'open' && ticket.id !== ticketId)
   const { dot, icon, label } = threadMark(t, thread)
   const reaches = live.length > 0 && `${live[0]!.title}${live.length > 1 ? t('andMore', { count: live.length - 1 }) : ''}`
@@ -73,25 +88,27 @@ export function ThreadLine({ thread, ticketId, context }: { thread: ThreadRow; t
           label={t('fanoutTo')} value={reaches} />}
         <When at={thread.lastAt} />
       </div>
+      {onChanged && thread.actions.delete && <DeleteButton title={t('deleteThreadTitle')} message={t('deleteThreadConfirm',
+        { title: readableMarkers(t, thread.title) })} request={() => call('POST threads/:key/delete', { key: thread.key })} onChanged={onChanged} />}
     </div>
   </li>
 }
 
-export function DecisionLine({ decision }: { decision: DecisionRow }) {
-  const { t, navigate } = usePanel()
+/** Decision list row; `onChanged` offers deletion and reloads the list after it. */
+export function DecisionLine({ decision, onChanged }: { decision: DecisionRow; onChanged?: () => Promise<void> }) {
+  const { t, call, navigate } = usePanel()
   const matched = decision.rules.filter(rule => rule.matched).map(rule => rule.name)
   const mark = decisionMark(t, decision.outcome)
   const preview = readableMarkers(t, decision.preview)
   const reason = decision.reason ? reasonLabel(t, decision.reason) : ''
+  const title = decision.ticketTitle ?? (decision.threadTitle ? readableMarkers(t, decision.threadTitle) : preview || t('empty'))
   const open = () => decision.ticketId ? navigate({ page: 'execution', id: decision.ticketId })
     : navigate({ page: 'trigger', id: decision.thread, query: { trigger: decision.triggerIds[0] ?? '' } })
   return <li className="dt-row dt-link dt-ticket">
     <div className="dt-ticket-stage"><StageMark state={mark.dot} icon={mark.icon} label={mark.label} /></div>
     <div className="dt-ticket-body">
       <div className="dt-row-title">
-        <button type="button" className="dt-open" title={reason || undefined} onClick={open}>
-          {decision.ticketTitle ?? (decision.threadTitle ? readableMarkers(t, decision.threadTitle) : preview || t('empty'))}
-        </button>
+        <button type="button" className="dt-open" title={reason || undefined} onClick={open}>{title}</button>
       </div>
       <div className="dt-row-quote dt-line">{preview}</div>
       <div className="dt-row-meta dt-line">
@@ -99,6 +116,8 @@ export function DecisionLine({ decision }: { decision: DecisionRow }) {
         {matched.length > 0 && <LabelValue label={t('ruleLabel')} value={matched.join(t('listSeparator'))} />}
         <When at={decision.at} />
       </div>
+      {onChanged && decision.actions.delete && <DeleteButton title={t('deleteDecisionTitle')} message={t('deleteDecisionConfirm', { title })}
+        request={() => call('POST decisions/:id/delete', { id: decision.id })} onChanged={onChanged} />}
     </div>
   </li>
 }

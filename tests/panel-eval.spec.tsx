@@ -200,3 +200,13 @@ it('keeps GitHub source switches available while hiding its policy tab in Englis
   expect(all('.dt-subtab').some(item => item.textContent === 'GitHub')).toBe(false)
   expect(text()).not.toContain('New Issues')
 })
+
+it('deletes a Decision from the list after confirmation', async () => {
+  await mount()
+  await click(zh['tab.eval'])
+  expect(text()).toContain('@bot 修一下')
+  await click(zh.remove)
+  await click(zh.confirm)
+  expect(server.requests.some(request => request.path === 'decisions/d1/delete' && request.method === 'POST')).toBe(true)
+  expect(text()).not.toContain('@bot 修一下')
+})

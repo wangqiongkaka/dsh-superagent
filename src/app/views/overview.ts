@@ -9,7 +9,7 @@ import { sourceHealth, type HealthMap } from './sources.ts'
 import { ticketRow, type ExecutorLoad } from './tickets.ts'
 import { preview } from './text.ts'
 
-/** Threads whose latest decision since `since` is an undismissed `unavailable` eval and that are neither evaluating nor queued. */
+/** Threads whose latest decision since `since` is an undismissed, undeleted `unavailable` eval and that are neither evaluating nor queued. */
 function unjudged(store: Store, since: string): { thread: Thread; decision: Decision }[] {
   const seen = new Set<string>()
   const queue = { store, owners: ownersOf(store) }
@@ -17,7 +17,7 @@ function unjudged(store: Store, since: string): { thread: Thread; decision: Deci
     if (seen.has(decision.threadKey)) return []
     seen.add(decision.threadKey)
     const thread = store.threads.get(decision.threadKey)
-    if (!thread || thread.evaluating || awaitingEval(queue, thread).length || decision.dismissed) return []
+    if (!thread || thread.evaluating || awaitingEval(queue, thread).length || decision.dismissed || decision.deleted) return []
     if (store.decisions.byThread(thread.key).at(-1)?.id !== decision.id) return []
     return [{ thread, decision }]
   })

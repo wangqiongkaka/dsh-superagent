@@ -109,8 +109,9 @@ export class Engine {
   attach(ticketId: string, triggerId: string, note?: string): Ticket {
     return this.repo.atomic(() => {
       // A message this ticket's worker handed back is not its work: attached here, no worker would decide it, and it could not be handed back again.
-      const handedBack = this.repo.triggers.disposition(triggerId)?.handbacks?.some(item => item.ticketId === ticketId)
-      if (handedBack) throw new UserError('handedBackHere')
+      const disposition = this.repo.triggers.disposition(triggerId)
+      if (disposition?.deleted) throw new UserError('deletedTrigger')
+      if (disposition?.handbacks?.some(item => item.ticketId === ticketId)) throw new UserError('handedBackHere')
       const trigger = this.tickets.attachable(ticketId, triggerId)
       this.evals.withdraw(trigger)
       this.tickets.attach(ticketId, trigger, note)
@@ -148,6 +149,16 @@ export class Engine {
    * @throws UserError for a Decision that is unknown or not unavailable.
    */
   dismiss(decisionId: string): Decision { return this.repo.atomic(() => this.evals.dismiss(decisionId)) }
+  /**
+   * A person deletes a Decision from the panel's lists; its Triggers are decided no more.
+   * @throws UserError for a Decision that is unknown, whose ticket is open, or whose Triggers an Eval in progress holds.
+   */
+  deleteDecision(decisionId: string): Decision { return this.repo.atomic(() => this.evals.deleteDecision(decisionId)) }
+  /**
+   * A person deletes a Thread and its Decisions from the panel's lists; its queue and Eval in progress end.
+   * @throws UserError for a Thread that is unknown or has an open ticket subscribed.
+   */
+  deleteThread(threadKey: string): void { this.repo.atomic(() => { this.evals.deleteThread(threadKey) }) }
   /**
    * Drop every ticket's Subscription to a Thread, until a new Decision subscribes one again.
    * @returns whether a Subscription was dropped.
@@ -262,7 +273,7 @@ export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadCl
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'>
 /** What people ask of the Engine, through the panel or the main Session. */
-export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss'>
+export type EngineForPeople = Pick<Engine, 'stopTicket' | 'retryTicket' | 'reevaluate' | 'unsubscribe' | 'dismiss' | 'deleteDecision' | 'deleteThread'>
 /** What Settings tells the Engine. */
 export type EngineForSettings = Pick<Engine, 'policyChanged'>
 /** What the Executor tells the Engine, and what its workers ask of it. */

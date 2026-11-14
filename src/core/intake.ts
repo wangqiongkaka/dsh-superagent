@@ -33,6 +33,7 @@ export class Intake extends EnginePart {
     for (const ref of trigger.threads) {
       const thread = this.thread(ref)
       if (!thread.lastAt || trigger.at > thread.lastAt) thread.lastAt = trigger.at
+      delete thread.deletedAt
       thread.correlated = [...new Set([...thread.correlated, ...keys.filter(other => other !== thread.key)])]
       for (const ticketId of trigger.human ? [] : thread.subscriptions) {
         const ticket = this.repo.tickets.get(ticketId)

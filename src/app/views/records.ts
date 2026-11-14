@@ -175,7 +175,7 @@ export function threadSummary(view: Snapshot, thread: Thread) {
   const pending = awaitingEval(view, thread).length
   return { key: thread.key, source: thread.ref.source, title: threadTitle(store, thread), stage: threadStage(thread, pending, tickets),
     latest: latestOnThread(view, thread), lastAt: thread.lastAt ?? thread.createdAt, createdAt: thread.createdAt,
-    subscriptions: thread.subscriptions.length, tickets,
+    subscriptions: thread.subscriptions.length, tickets, actions: { delete: !tickets.some(ticket => ticket.state === 'open') },
     evaluating: thread.evaluating ? { id: thread.evaluating.id, strength: thread.evaluating.strength, triggers: thread.evaluating.triggerIds.length, startedAt: thread.evaluating.startedAt, deadline: thread.evaluating.deadline } : undefined,
     pending, pollError: attribute(thread.meta.pollError), url: threadUrl(store, thread),
     facts: (thread.meta.facts ?? {}) as ThreadFacts }
@@ -205,11 +205,14 @@ export function decisionView(view: Snapshot, decision: Decision) {
   const audit = AuditSchema.parse(decision.audit ?? {})
   // Fall back to `matches` for assessments recorded by older versions.
   const judged = audit.rule_assessments ?? audit.matches?.map(match => ({ ...match, matched: true })) ?? []
+  const ticket = decision.ticketId ? store.tickets.get(decision.ticketId) : undefined
+  // Mirrors `Evals.deleteDecision`: an open ticket or an Eval in progress on its Triggers keeps a Decision.
+  const deletable = !(ticket && liveTicket(ticket)) && !thread?.evaluating?.triggerIds.some(id => decision.triggerIds.includes(id))
   return { id: decision.id, kind: decision.kind, outcome: outcomeOf(decision), reason: decision.reason, at: decision.at,
     strength: decision.strength, ticketId: decision.ticketId, triggerIds: decision.triggerIds, thread: decision.threadKey,
     rules: judged.map(rule => ({ ...view.rule(rule.rule_id), matched: rule.matched, reason: rule.reason })),
     ...audit.direction ? { direction: audit.direction } : {},
     ...thread ? { threadTitle: threadTitle(store, thread) } : {}, preview: texts.join(' / '),
-    ticketTitle: decision.ticketId ? store.tickets.get(decision.ticketId)?.title : undefined }
+    ticketTitle: ticket?.title, actions: { delete: deletable } }
 }
 export type DecisionView = ReturnType<typeof decisionView>

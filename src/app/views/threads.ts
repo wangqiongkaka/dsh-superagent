@@ -13,8 +13,10 @@ export function threadList(host: ViewHost, filter: ThreadFilter, offset: number,
   const open = new Set(store.tickets.open().map(ticket => ticket.id))
   const live = (thread: Thread) => thread.subscriptions.some(id => open.has(id))
   const lastAt = (thread: Thread) => thread.lastAt ?? thread.createdAt
-  const kept = (thread: Thread) => filter === 'recent' ? lastAt(thread) >= since
-    : filter === 'all' || (filter === 'subscribed' ? live(thread) : !!thread.evaluating || awaitingEval(view, thread).length > 0)
+  // A deleted Thread stays listed while work on it goes on again, such as a person's re-evaluation, so counts match the list.
+  const deleted = (thread: Thread) => !!thread.deletedAt && !thread.evaluating && !thread.pending.length && !live(thread)
+  const kept = (thread: Thread) => !deleted(thread) && (filter === 'recent' ? lastAt(thread) >= since
+    : filter === 'all' || (filter === 'subscribed' ? live(thread) : !!thread.evaluating || awaitingEval(view, thread).length > 0))
   const candidates = filter === 'subscribed' ? store.read.subscribedThreads()
     : filter === 'evaluating' ? store.threads.active() : store.threads.list()
   const threads = candidates.filter(kept).sort((a, b) => lastAt(b).localeCompare(lastAt(a)))

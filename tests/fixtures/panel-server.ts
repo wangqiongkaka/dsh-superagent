@@ -47,7 +47,7 @@ export const ticketSummary = (fields: Partial<TicketFields> = {}, stage: TicketS
 export const threadSummary = (fields: Partial<ThreadRow> = {}): ThreadRow => ({
   key: 'feishu:oc_1:om_root', source: 'feishu', title: '这个文案好奇怪', stage: 'subscribed', latest: undefined, lastAt: '2026-09-23T00:00:00Z',
   createdAt: '2026-09-22T00:00:00Z', subscriptions: 1, tickets: [{ id: 't1', title: '修复回归', state: 'open' }], evaluating: undefined,
-  pending: 0, pollError: undefined, url: undefined, facts: { chat: { value: '团队群' } }, ...fields,
+  pending: 0, pollError: undefined, url: undefined, facts: { chat: { value: '团队群' } }, actions: { delete: false }, ...fields,
 })
 type TriggerFields = Partial<Omit<TriggerRow, 'disposition' | 'actions'>> & { disposition?: Partial<TriggerRow['disposition']> }
 /** Build a trigger row on the default thread and compute `actions.requeue` using the host's eligibility rules. */
@@ -101,6 +101,8 @@ export interface PanelServer {
   /** Requests with undeclared query params or invalid body presence; asserted empty after each test. */
   misuse: string[]
   queued: Set<string>
+  /** Decisions deleted through the panel, which the decision list omits. */
+  deleted: Set<string>
   searching?: (query: string) => Promise<void>
   setup: SetupView
   health: Record<string, Health>
@@ -209,7 +211,7 @@ const overviewView = (): ApiResponse<'GET overview'> => {
 }
 export const acceptDecision = (): NonNullable<TicketPageView['decision']> => ({ id: 'd1', kind: 'accept', outcome: 'accept',
   reason: [{ code: 'explicitRouted' }], at: '2026-09-22T00:00:00Z', strength: 'explicit', ticketId: undefined,
-  triggerIds: ['e1'], thread: 'feishu:oc_1:om_root', rules: [], preview: '@bot 修一下', ticketTitle: undefined })
+  triggerIds: ['e1'], thread: 'feishu:oc_1:om_root', rules: [], preview: '@bot 修一下', ticketTitle: undefined, actions: { delete: true } })
 const ticketDetail = (): TicketPageView => ({
   ...ticketSummary(), paused: false, canCleanupWorktrees: false, decision: acceptDecision(), threads: [threadSummary()],
   mandate: { strength: 'explicit', policyVersion: 'abcdef1234567890', basis: { via: 'addressed', sender: 'Alice', addressed: 'mention' },
@@ -253,7 +255,7 @@ function initial(): PanelServer {
     en: 'Feishu message' } }
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
-    masterId: 'master', health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
+    masterId: 'master', health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), deleted: new Set(), dropped: [], failing: [],
     setup: { machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
@@ -331,9 +333,14 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
     server.threads = []
     return { removed, thread: params.key, context_delivery: 'injected' }
   } },
+  'POST threads/:key/delete': { answer: ({ params }) => {
+    server.threads = server.threads.filter(thread => thread.key !== params.key)
+    return { deleted: true }
+  } },
   'POST triggers/:id/requeue': { answer: ({ params }) => { server.queued.add(params.id); return { queued: true } } },
   'GET decisions': { query: ['kind', 'window', 'offset', 'limit'], answer: ({ query }) =>
-    ({ items: query.kind === 'ignore' ? [] : [acceptDecision()], next_offset: null }) },
+    ({ items: query.kind === 'ignore' ? [] : [acceptDecision()].filter(item => !server.deleted.has(item.id)), next_offset: null }) },
+  'POST decisions/:id/delete': { answer: ({ params }) => { server.deleted.add(params.id); return { deleted: true } } },
   'POST decisions/:id/dismiss': { answer: ({ params }) => params.id === 'u1' ? { dismissed: true } : refuse(404,
     'Unavailable Eval not found') },
   'GET tickets': { query: ['state', 'offset', 'limit'], answer: ({ query }) => page(server.tickets[query.state === 'ended' ? 'ended'

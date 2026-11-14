@@ -142,3 +142,17 @@ it('shows a link\'s target far back with every Trigger after it', async () => {
   expect(document.querySelector('.dt-highlight .dt-event-text')?.textContent).toBe('message m10')
   expect(all('button').some(button => button.textContent === zh.loadEarlier)).toBe(false)
 })
+
+it('deletes a Thread without open work from the list after confirmation, and offers no deletion while its ticket is open', async () => {
+  server.threads = [threadSummary(), threadSummary({ key: 'feishu:oc_1:om_done', title: '已结束的话题', stage: 'dormant',
+    tickets: [{ id: 't2', title: '旧工单', state: 'ended' }], actions: { delete: true } })]
+  await mount()
+  await click(zh['tab.trigger'])
+  await click(zh['threadFilter.all'])
+  const row = (title: string) => all('.dt-ticket').find(element => element.textContent?.includes(title))
+  expect([...row('这个文案好奇怪')!.querySelectorAll('button')].map(button => button.textContent)).not.toContain(zh.remove)
+  await click([...row('已结束的话题')!.querySelectorAll<HTMLElement>('button')].find(button => button.textContent === zh.remove)!)
+  await click(zh.confirm)
+  expect(server.requests.some(request => request.path === 'threads/feishu:oc_1:om_done/delete' && request.method === 'POST')).toBe(true)
+  expect(row('已结束的话题')).toBeUndefined()
+})
