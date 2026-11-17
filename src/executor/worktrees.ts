@@ -17,18 +17,22 @@ const contains = (parent: string, child: string): boolean => {
 const remoteUrl = (value: string): string => value.trim().replace(/^git@([^:]+):/, 'https://$1/').replace(/^ssh:\/\/git@/, 'https://').replace(/\/$/, '').replace(/\.git$/, '')
 
 /** Freezes workspace paths on acceptance; the configured primary is included even for a secondary-only task. */
-export function worktreeExecution(execution: Execution, repositories: Repository[], settings: Settings, trigger: Trigger): Execution {
+export function worktreeExecution(execution: Execution, repositories: Repository[], settings: Settings, trigger: Trigger, previous: readonly Execution[] = []): Execution {
   const primary = primaryRepository(settings, trigger)
   if (!primary) return { ...execution, repositories }
   const main = availableRepositories(settings, trigger).find(repo => repo.id === primary)
   if (!main) throw new Error('主仓库必须是当前入口已绑定的可用仓库。')
   const selected = [main, ...repositories.filter(repo => repo.id !== primary)]
+  const retainedCheckouts = previous.flatMap(item => item.repositories ?? [])
+  const cleaned = new Set(retainedCheckouts.flatMap(item => item.worktree?.cleanedAt ? [item.worktree.directory] : []))
   const checkouts = selected.map(repo => {
     const base = repo.localPath || (repo.workspaceParent ? join(repo.workspaceParent, repo.id) : '')
     if (!base) throw new Error(`仓库 ${repo.id} 尚未配置已有本地仓库路径或工作区父目录。`)
     const root = repo.worktreeRoot || join(dirname(base), `${basename(base)}-worktrees`)
+    const retained = retainedCheckouts.find(item => item.provider === repo.provider && item.url === repo.url
+      && item.worktree?.base === base && dirname(item.worktree.directory) === root && !cleaned.has(item.worktree.directory))
     return { id: repo.id, provider: repo.provider, url: repo.url, cli: repo.cli,
-      worktree: { base, directory: join(root, execution.name), initialize: true } }
+      worktree: { base, directory: retained?.worktree?.directory ?? join(root, execution.name), initialize: true } }
   })
   for (const checkout of checkouts) for (const other of checkouts) {
     if (contains(other.worktree.base, checkout.worktree.directory)
@@ -64,8 +68,8 @@ async function initializeRepository(repo: Checkout, run: GitRun, verify: (direct
   } finally { await release() }
 }
 
-/** Validates existing checkouts without resetting them; creates only absent worktrees, under a shared repository lock. */
-export async function prepareWorktree(repo: Checkout, name: string, defaultBranch: string, run: GitRun, verify: (directory: string) => Promise<void>, create: boolean): Promise<void> {
+/** Validates or hands off retained checkouts without resetting files; serializes Git changes under a shared repository lock. */
+export async function prepareWorktree(repo: Checkout, name: string, defaultBranch: string, run: GitRun, verify: (directory: string) => Promise<void>, create: boolean, previousName?: string): Promise<void> {
   const { base, directory } = repo.worktree!
   await initializeRepository(repo, run, verify, create)
   const source = await realpath(base)
@@ -84,16 +88,28 @@ export async function prepareWorktree(repo: Checkout, name: string, defaultBranc
     if (existing) {
       if (!existing.isDirectory()) throw new Error(`Worktree 路径已被文件或符号链接占用：${directory}`)
       const target = await realpath(directory)
+      const currentBranch = await git(['symbolic-ref', '--quiet', 'HEAD'], target)
       if (target === source || contains(source, target)
         || await realpath(await git(['rev-parse', '--show-toplevel'], target)) !== target
         || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-common-dir'], target)) !== common
         || await realpath(await git(['rev-parse', '--path-format=absolute', '--git-dir'], target)) === common
-        || await git(['symbolic-ref', '--quiet', 'HEAD'], target) !== `refs/heads/${branch}`)
+        || currentBranch !== `refs/heads/${branch}` && (!previousName || currentBranch !== `refs/heads/agent/${previousName}`))
         throw new Error(`Worktree ${directory} 不属于该工单；保留现场，请人工检查。`)
       await verify(target)
+      if (currentBranch !== `refs/heads/${branch}`) {
+        if (await git(['status', '--porcelain', '--untracked-files=all'], target))
+          throw new Error('同话题 worktree 存在修改或未跟踪的文件，已保留；请先完成原工单或人工保存。')
+        await assertNoContainerMount(target, run, source)
+        if (create) {
+          await git(['check-ref-format', `refs/heads/${defaultBranch}`])
+          await git(['fetch', '--no-tags', '--', `${repo.url}.git`, `+refs/heads/${defaultBranch}:refs/remotes/origin/${defaultBranch}`])
+          await git(['switch', '--no-overwrite-ignore', '-c', branch, `refs/remotes/origin/${defaultBranch}`], target)
+        } else await git(['switch', '--no-overwrite-ignore', branch], target)
+        await verify(target)
+      }
       return
     }
-    if (!create) throw new Error(`工单 worktree 已丢失：${directory}；不会自动重建或丢弃原工作。`)
+    if (!create || previousName) throw new Error(`工单 worktree 已丢失：${directory}；不会自动重建或丢弃原工作。`)
     await mkdir(dirname(directory), { recursive: true })
     const parent = await realpath(dirname(directory))
     if (contains(source, join(parent, basename(directory)))) throw new Error('Worktree 目录不能位于基础仓库内。')
@@ -130,7 +146,7 @@ async function assertNoContainerMount(directory: string, run: GitRun, cwd: strin
       }
     }
   } catch (error) {
-    throw new Error(`容器挂载检查未通过，不能清理 worktree：${error instanceof Error ? error.message : String(error)}`)
+    throw new Error(`容器挂载检查未通过，不能切换或清理 worktree：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

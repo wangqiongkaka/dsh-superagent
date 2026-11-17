@@ -18,11 +18,13 @@ import { Later, type Effects } from '../app/effects.ts'
 import { executionRoot, type Variable } from '../app/execution-environment.ts'
 import type { Sessions } from '../app/sessions.ts'
 import { WorktreeNameSchema } from '../app/assessment.ts'
+import { KV } from '../kv.ts'
 import { resultRelay } from '../app/notices.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, hasLiveChildren, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
 const now = (): string => new Date().toISOString()
+const worktreeDirectories = (ticket: Ticket): string[] => ticket.execution?.repositories?.flatMap(repo => repo.worktree ? [repo.worktree.directory] : []) ?? []
 /** The text of `error`, and of what an `AggregateError` collected, which its own message leaves out. */
 const failureText = (error: unknown): string => error instanceof AggregateError
   ? [String(error), ...error.errors.map(failureText)].join('\n')
@@ -69,7 +71,7 @@ export interface ExecutorHost {
   /** Where the Executor reports what happened to Assignments and Inputs. */
   readonly engine: Pick<EngineForExecutor, 'assignmentStarted' | 'inputsDelivered' | 'inputsRead' | 'turnEnded' | 'deliveryFailed' | 'report'
     | 'assignmentInterrupted'>
-  readonly store: Pick<Store, 'tickets' | 'triggers' | 'set' | 'settings' | 'atomic' | 'afterCommit'>
+  readonly store: Pick<Store, 'tickets' | 'triggers' | 'get' | 'set' | 'settings' | 'atomic' | 'afterCommit'>
   /** Durable effect queue through which launches and input deliveries run. */
   readonly effects: Pick<Effects, 'enqueue' | 'handle'>
   /** The `worker` health entry, which reports whether background worker event handling failed. */
@@ -205,7 +207,7 @@ export class WorkerSlots {
 }
 
 /**
- * Executes ticket assignments in persistent per-ticket DSH worker sessions and isolated workspace directories.
+ * Executes assignments in persistent per-ticket DSH sessions, reusing same-topic worktree directories serially.
  * Queues launches and input deliveries through Effects, manages concurrency with WorkerSlots, listens for `agent/status`,
  * `agent/inbox/claimed`, `session/event` and `agent/error` events on the Cordis context, and reports status transitions back to Engine.
  * Runtime, Engine, worker tools, and management routes use this class to prepare, launch, deliver to, stop, and resume ticket assignments.
@@ -213,6 +215,10 @@ export class WorkerSlots {
 export class DshExecutor implements Executor {
   private readonly disposers: (() => void)[] = []
   private readonly slots: WorkerSlots
+  /** A replacement assignment cannot release the launch reservation still held by its predecessor. */
+  private readonly launching = new Set<string>()
+  /** Launches hold their directories until preparation and session startup finish, even if cancelled meanwhile. */
+  private readonly preparing = new Set<string>()
   /** Transient failure counts tried so far: keyed by `assignment.id` for worker turns and `launch:<assignment.id>` for launches. */
   private readonly transient = new Map<string, number>()
   /** Assignment IDs currently waiting on a transient-failure backoff timer before resuming their worker turn. */
@@ -246,7 +252,42 @@ export class DshExecutor implements Executor {
     const trigger = sourceTrigger(this.host, ticket)
     const repositories = trigger ? selectRepositories(settings, trigger, outcome.repositories) : undefined
     const execution = ticketExecution(ticket, outcome, settings, this.host.machine.stateDir)
-    return { ...ticket, execution: repositories && trigger ? worktreeExecution(execution, repositories, settings, trigger) : execution }
+    const topic = trigger?.threads[0] && threadKey(trigger.threads[0])
+    const previous = topic ? this.host.store.tickets.list().filter(other => {
+      const origin = sourceTrigger(this.host, other)?.threads[0]
+      return other.id !== ticket.id && origin && threadKey(origin) === topic
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id)).flatMap(other => other.execution ?? []) : []
+    return { ...ticket, execution: repositories && trigger ? worktreeExecution(execution, repositories, settings, trigger, previous) : execution }
+  }
+  /** Legacy directories have one prepared ticket; new acquisitions record their current owner explicitly. */
+  private worktreeOwner(directory: string): Ticket | undefined {
+    const id = this.host.store.get(KV.executor.worktree(directory))
+    if (!id) return this.host.store.tickets.list().find(ticket => ticket.execution?.prepared && worktreeDirectories(ticket).includes(directory))
+    const owner = this.host.store.tickets.get(id)
+    if (!owner || !worktreeDirectories(owner).includes(directory)) throw new PrepareFailed('Worktree 归属记录不一致，目录已保留。')
+    return owner
+  }
+  /** Wait for the previous owner and its children to finish; pending tickets sharing a directory start in stable order. */
+  private async waitForWorktrees(ticket: Ticket, assignment: Assignment): Promise<void> {
+    const directories = worktreeDirectories(ticket)
+    let owns = false
+    for (const directory of directories) {
+      const owner = this.worktreeOwner(directory)
+      if (!owner) continue
+      if (owner.id === ticket.id) { owns = true; continue }
+      const session = workerSessionId(owner.id)
+      if (await hasLiveChildren(this.host.context, session)
+        || liveTicket(this.host.store.tickets.get(owner.id)!) || this.cleaning.has(owner.id) || this.stopping.has(owner.id) || this.settling.has(owner.id)
+        || this.host.context.agents.get(session as SessionId)?.status === 'running' || runningJobs(this.host.context, session).length)
+        throw new Later(`同话题工作区等待工单 ${owner.id} 释放。`)
+    }
+    if (owns) return
+    const order = `${assignment.createdAt}:${ticket.id}`
+    for (const other of this.host.store.tickets.open()) {
+      const pending = latestAssignment(other)
+      if (other.id !== ticket.id && pending?.state === 'pending' && `${pending.createdAt}:${other.id}` < order
+        && worktreeDirectories(other).some(directory => directories.includes(directory))) throw new Later(`同话题工作区等待工单 ${other.id}。`)
+    }
   }
   /**
    * Runs the configured `executor.prepare` command for a new ticket workspace in its parent directory with the ticket's
@@ -268,10 +309,13 @@ export class DshExecutor implements Executor {
           const manifest = JSON.parse(env.DSH_SUPERAGENT_REPOSITORIES!) as { id: string; defaultBranch: string }[]
           const branch = manifest.find(item => item.id === repository.id)?.defaultBranch
           if (!branch) throw new PrepareFailed(`Repository ${repository.id} has no default branch`)
+          const owner = this.worktreeOwner(repository.worktree.directory)
           await prepareWorktree(repository, ticket.execution.name, branch,
             (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env),
-            cwd => verifyDirectory(cwd, this.host.context.subprocess, signal), !ticket.execution.prepared)
+            cwd => verifyDirectory(cwd, this.host.context.subprocess, signal), !ticket.execution.prepared,
+            owner?.id !== ticket.id ? owner?.execution?.name : undefined)
             .catch((error: unknown) => { throw new PrepareFailed(String(error)) })
+          this.host.store.set(KV.executor.worktree(repository.worktree.directory), ticket.id)
           continue
         }
         const target = join(directory, repository.id)
@@ -304,8 +348,20 @@ export class DshExecutor implements Executor {
     const ticket = this.host.store.tickets.get(ticketId)
     const assignment = ticket && latestAssignment(ticket)
     if (!ticket || !liveTicket(ticket) || assignment?.id !== assignmentId || assignment.state !== 'pending') return
+    if (this.launching.has(ticketId)) throw new Later('该工单的前次启动尚未结束。')
     this.slots.reserve(ticketId, 'launch')
-    try { await this.launch(ticket, assignment); this.transient.delete(`launch:${assignmentId}`) }
+    this.launching.add(ticketId)
+    try {
+      await this.waitForWorktrees(ticket, assignment)
+      const directories = worktreeDirectories(ticket)
+      if ([...this.preparing].some(id => {
+        const other = this.host.store.tickets.get(id)
+        return other && worktreeDirectories(other).some(directory => directories.includes(directory))
+      })) throw new Later('同话题工作区仍在准备，请稍后重试。')
+      this.preparing.add(ticketId)
+      await this.launch(ticket, assignment)
+      this.transient.delete(`launch:${assignmentId}`)
+    }
     catch (error) {
       // Shutdown or pause re-queues the launch for resume, and transient network/provider errors retry with backoff.
       // A failed prepare command is not retried automatically because an existing directory counts as prepared, so retrying
@@ -314,7 +370,7 @@ export class DshExecutor implements Executor {
       if (this.host.closing() || error instanceof Later) throw error
       if (!(error instanceof PrepareFailed) && this.retries(`launch:${assignmentId}`, error)) throw error
       this.launchFailed(ticketId, assignmentId, error)
-    } finally { this.slots.free(ticketId) }
+    } finally { this.launching.delete(ticketId); this.preparing.delete(ticketId); this.slots.free(ticketId) }
   }
   /**
    * Delivers queued inputs to a running assignment one by one, re-reading ticket state before each delivery so delivery
@@ -444,7 +500,7 @@ export class DshExecutor implements Executor {
       if (await hasLiveChildren(this.host.context, workerSessionId(id))) throw new Error('子会话尚未释放，不能清理。')
       const current = this.host.store.tickets.get(id)
       const agent = this.host.context.agents.get(workerSessionId(id) as SessionId)
-      if (!current?.ended || (agent && agent.status !== 'idle') || this.settling.has(id)
+      if (!current?.ended || (agent && agent.status !== 'idle') || this.settling.has(id) || this.preparing.has(id)
         || runningJobs(this.host.context, workerSessionId(id)).length)
         throw new Error('工单或会话仍在运行，不能清理。')
     }
@@ -458,9 +514,20 @@ export class DshExecutor implements Executor {
       for (const repo of execution.repositories ?? []) {
         if (!repo.worktree || (ignored && ignored.repository !== repo.id)) continue
         try {
+          const assertOwned = async () => {
+            await assertIdle()
+            const owner = this.worktreeOwner(repo.worktree!.directory)
+            if (owner && owner.id !== id) throw new Error('该 worktree 已由后续工单接管，请从当前归属工单清理；目录已保留。')
+            if (this.host.store.tickets.open().some(other => other.id !== id && worktreeDirectories(other).includes(repo.worktree!.directory))
+              || [...this.preparing].some(id => {
+                const other = this.host.store.tickets.get(id)
+                return other && worktreeDirectories(other).includes(repo.worktree!.directory)
+              })) throw new Error('同话题仍有工单等待使用该 worktree，不能清理。')
+          }
+          await assertOwned()
           const directory = await removeWorktree(repo, execution.name,
-            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env), assertIdle, ignored?.token)
-          await assertIdle()
+            (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env), assertOwned, ignored?.token)
+          await assertOwned()
           const workspace = this.host.context.workspaceRegistry.list().find(item => item.path === directory)
           if (workspace) await this.host.context.workspaceRegistry.delete(workspace.id)
           const stored = this.host.store.tickets.get(id)!

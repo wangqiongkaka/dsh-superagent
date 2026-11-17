@@ -1877,6 +1877,99 @@ it('rejects cleanup of open tickets and ended tickets with a running session', a
   await expect(runtime.executor.cleanupWorktrees(ticket.id)).rejects.toThrow('仍在运行')
 })
 
+it('serializes same-topic worktrees across tickets, persists ownership and protects old sessions and cleanup', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, sources: { ...settings.sources,
+    git: { enabled: true, config: { repositories: [{ id: 'service', provider: 'github', url: 'https://github.com/acme/service', cli: AGENT(), localPath: join(directory, 'base') }] } },
+    feishu: { enabled: true, config: { ...settings.sources.feishu!.config, chats: [{ chatId: CHAT, listen: 'all', repositories: 'service', primaryRepository: 'service' }] } },
+  } })
+  const prepare = vi.spyOn(worktrees, 'prepareWorktree').mockResolvedValue()
+  const first = await acceptedTicket()
+  await runtime.idle()
+  const nextTrigger = feishu('31', '@bot 发布最新代码', { root_id: 'om_1' })
+  runtime.receive(nextTrigger); await runtime.idle()
+  const accepted = await route({ kind: 'accept', trigger_id: nextTrigger.id, title: '发布最新代码', worktree_name: 'deploy-latest', acknowledgement: '收到' })
+  const nextTicket = runtime.store.tickets.get((accepted.ticket as { ticket_id: string }).ticket_id)!
+  const next = { ticket: nextTicket, sessionId: `worker-${nextTicket.id}` }
+  const isolated = await acceptedTicket(feishu('32', '@bot 其他话题'))
+  expect(next.ticket.execution!.directory).toBe(first.ticket.execution!.directory)
+  expect(isolated.ticket.execution!.directory).not.toBe(first.ticket.execution!.directory)
+  expect(next.ticket.execution!.name).not.toBe(first.ticket.execution!.name)
+  expect(runtime.store.tickets.get(next.ticket.id)!.assignments.at(-1)!.state).toBe('pending')
+  expect(agents.has(next.sessionId)).toBe(false)
+  // Legacy prepared tickets without an owner record are still respected after upgrading.
+  runtime.store.delete(KV.executor.worktree(first.ticket.execution!.directory))
+  runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
+  await runtime.pump(); await runtime.idle()
+  expect(agents.has(next.sessionId)).toBe(false)
+  await runTool(first.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'done' })
+  agents.get(first.sessionId)!.status = 'idle'
+  const remove = vi.spyOn(worktrees, 'removeWorktree').mockResolvedValue(first.ticket.execution!.directory)
+  expect(await runtime.executor.cleanupWorktrees(first.ticket.id)).toMatchObject([{ removed: false, reason: expect.stringContaining('等待使用') }])
+  await vi.waitFor(async () => {
+    runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
+    await runtime.pump(); await runtime.idle()
+    expect(runtime.store.tickets.get(next.ticket.id)!.assignments.at(-1)!.state).toBe('running')
+  })
+  expect(prepare.mock.calls.at(-1)?.slice(1, 3)).toEqual([next.ticket.execution!.name, 'main'])
+  expect(prepare.mock.calls.at(-1)?.[6]).toBe(first.ticket.execution!.name)
+  expect(await runtime.executor.cleanupWorktrees(first.ticket.id)).toMatchObject([{ removed: false, reason: expect.stringContaining('后续工单接管') }])
+  expect(remove).not.toHaveBeenCalled()
+  const reopened = new Store(join(directory, 'orchestrator.sqlite'))
+  expect(reopened.get(KV.executor.worktree(next.ticket.execution!.directory))).toBe(next.ticket.id)
+  reopened.close()
+  const follow = feishu('33', '@bot 继续最初的改动', { root_id: 'om_1' })
+  runtime.receive(follow); await runtime.idle()
+  await route({ kind: 'attach', ticket_id: first.ticket.id, trigger_id: follow.id })
+  expect(runtime.store.tickets.get(first.ticket.id)!.assignments.at(-1)!.state).toBe('pending')
+  expect(guards.get(first.sessionId)!()).toContain('Worktree is not ready')
+  await runTool(next.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'released' })
+  agents.get(next.sessionId)!.status = 'idle'
+  await vi.waitFor(async () => {
+    runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
+    await runtime.pump(); await runtime.idle()
+    expect(runtime.store.tickets.get(first.ticket.id)!.assignments.at(-1)!.state).toBe('running')
+  })
+  expect(prepare.mock.calls.at(-1)?.[5]).toBe(false)
+  expect(prepare.mock.calls.at(-1)?.[6]).toBe(next.ticket.execution!.name)
+  expect(guards.get(next.sessionId)!()).toContain('Ticket ended')
+  expect(guards.get(first.sessionId)!()).toBeUndefined()
+})
+
+it('holds a cancelled ticket directory until its preparation finishes', async () => {
+  const settings = runtime.store.settings()
+  runtime.store.saveSettings({ ...settings, sources: { ...settings.sources,
+    git: { enabled: true, config: { repositories: [{ id: 'service', provider: 'github', url: 'https://github.com/acme/service', cli: AGENT(), localPath: join(directory, 'base') }] } },
+    feishu: { enabled: true, config: { ...settings.sources.feishu!.config, chats: [{ chatId: CHAT, listen: 'all', repositories: 'service', primaryRepository: 'service' }] } },
+  } })
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const prepare = vi.spyOn(worktrees, 'prepareWorktree').mockImplementationOnce(() => blocked).mockResolvedValue()
+  const firstTrigger = feishu('1', '@bot 修一下')
+  await receive(firstTrigger)
+  runtime.engine.decide(firstTrigger.id, { kind: 'accept', title: '修复', scope: '修复', name: 'fix', reason: { code: 'explicitRouted' }, acknowledgement: '收到' })
+  await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1))
+  const first = runtime.store.tickets.list()[0]!
+  // A failure report can make a launch retryable before its preparation has released the directory.
+  runtime.store.tickets.save({ ...first, assignments: first.assignments.map(item => ({ ...item,
+    report: { state: 'failed', summary: 'interrupted launch', at: new Date().toISOString() } })) })
+  runtime.engine.retryTicket(first.id)
+  await runtime.pump()
+  expect(prepare).toHaveBeenCalledTimes(1)
+  runtime.engine.stopTicket(first.id)
+  const nextTrigger = feishu('2', '@bot 新任务', { root_id: 'om_1' })
+  receiveAndRoute(runtime, nextTrigger)
+  runtime.engine.decide(nextTrigger.id, { kind: 'accept', title: '新任务', scope: '新任务', name: 'next', reason: { code: 'explicitRouted' }, acknowledgement: '收到' })
+  await vi.waitFor(() => expect(runtime.store.tickets.list()).toHaveLength(2))
+  await runtime.pump()
+  expect(prepare).toHaveBeenCalledTimes(1)
+  release()
+  await runtime.idle()
+  runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
+  await runtime.pump(); await runtime.idle()
+  expect(prepare).toHaveBeenCalledTimes(2)
+})
+
 
 it('removes only the cleaned workspace registration and permits retry after registration deletion fails', async () => {
   const { ticket, sessionId } = await acceptedTicket()

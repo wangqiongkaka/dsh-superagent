@@ -10,7 +10,7 @@ import type { SourceRegistry } from '../sources/registry.ts'
 export const EXECUTOR_VARIABLES: readonly (VariableSpec & { ticket?: true })[] = [
   { key: 'DSH_SUPERAGENT_REPOSITORIES', ticket: true, description: { zh: '工单仓库 JSON 清单；按 directory 访问，只在这些目录工作。primary 表示会话主仓库，branch 表示已创建的 worktree 分支；使用各自 CLI、账号和邮箱；覆盖旧版单仓库指令', en: 'Repository JSON manifest. Use explicit directory paths, not assumed subdirectories. primary marks the session repository; branch marks an already-created worktree branch. Use each repository CLI, account and email. Overrides legacy single-repository instructions.' } },
   { key: 'DSH_SUPERAGENT_DIR', ticket: true, description: { zh: '这个工单的执行目录；执行器 Session 在其中工作', en: 'This ticket\'s directory; the executor Session works in it' } },
-  { key: 'DSH_SUPERAGENT_NAME', ticket: true, description: { zh: '工单的短名，也是执行目录的名字', en: 'The ticket\'s short name, also its directory\'s name' } },
+  { key: 'DSH_SUPERAGENT_NAME', ticket: true, description: { zh: '工单短名，用于任务分支；执行目录以 DSH_SUPERAGENT_DIR 为准，同话题可复用目录', en: 'Ticket short name for its task branch; use DSH_SUPERAGENT_DIR for the directory, which may be reused within a topic' } },
   { key: 'DSH_SUPERAGENT_TICKET', ticket: true, description: { zh: '工单 id', en: 'The ticket id' } },
   { key: 'DSH_SUPERAGENT_BLOCKED_COMMANDS', description: { zh: '这个执行环境禁止调用的命令，以空格分隔；不要运行它们', en: 'Commands blocked in this execution environment, separated by spaces; never run them' } },
 ]

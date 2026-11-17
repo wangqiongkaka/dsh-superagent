@@ -126,6 +126,8 @@ export class Sessions {
       if (this.bindings.get(payload.agent)?.master && payload.agent.id !== this.host.masterId) throw new UserError('masterChanged')
       const ticket = this.ticketOf(payload.agent)
       if (ticket?.ended) throw new Error('该工单已结束，原会话仅供查看。请回到来源话题发送后续请求，由工单流程确认是否继续执行。')
+      if (ticket && !this.worktreesReady(ticket))
+        throw new Error('该 worktree 尚未完成准备或正由同话题其他工单使用，请等待工作区调度后继续。')
       return next()
     }, { prepend: true })
     guardEnded(this.ctx)
@@ -200,7 +202,7 @@ export class Sessions {
         const assignment = latestAssignment(ticket!)!.id
         const active = () => {
           const current = this.host.store.tickets.get(ticket!.id)
-          return !this.host.closing() && !!current && liveTicket(current) && latestAssignment(current)?.id === assignment
+          return !this.host.closing() && !!current && liveTicket(current) && latestAssignment(current)?.id === assignment && this.worktreesReady(current)
         }
         const mcp = await this.externalTools.connect(id, assignment, active, this.host.tools(result.agent, ticket))
         await bridge.manageSession(id, { owner: 'dsh-superagent', harness, ...selection && Object.keys(selection).length ? { selection } : {}, context: async () => {
@@ -370,8 +372,18 @@ export class Sessions {
     const allow = WORK_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
     return [agent.ctx.tools.restrict({ allow }), agent.ctx.tools.guard(() => {
       const current = store.tickets.get(ticketId)
-      return !current || !liveTicket(current) ? 'Ticket ended; new work needs a new authorized ticket' : undefined
+      if (!current || !liveTicket(current)) return 'Ticket ended; new work needs a new authorized ticket'
+      if (!this.worktreesReady(current)) return 'Worktree is not ready for this ticket; wait for workspace scheduling'
+      return undefined
     })]
+  }
+  /** A resumed ticket must wait for directory handoff before its old session or tools can run again. */
+  private worktreesReady(ticket: Ticket): boolean {
+    if (ticket.execution?.repositories?.some(repo => repo.worktree) && latestAssignment(ticket)?.state === 'pending') return false
+    return !ticket.execution?.repositories?.some(repo => {
+      const owner = repo.worktree && this.host.store.get(KV.executor.worktree(repo.worktree.directory))
+      return owner && owner !== ticket.id
+    })
   }
   /**
    * A subagent of an Executor Session, or of one of its subagents, which runs under DSH's `standard` preset with the worker's

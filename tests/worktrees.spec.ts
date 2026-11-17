@@ -122,6 +122,82 @@ it('starts new worktrees from an updated remote branch rather than local main', 
   expect(await readFile(join(base, 'file.txt'), 'utf8')).toBe('initial')
 })
 
+it('hands a topic directory to a fresh branch from remote main, retaining and later restoring the old branch', async () => {
+  const selected = checkout()
+  await prepareWorktree(selected, 'task-one', 'main', run, verify, true)
+  await writeFile(join(base, 'file.txt'), 'latest main')
+  await git(base, 'commit', '-am', 'update main'); await git(base, 'push', remote, 'main')
+  await prepareWorktree(selected, 'task-two', 'main', run, verify, true, 'task-one')
+  expect(await git(selected.worktree.directory, 'branch', '--show-current')).toBe('agent/task-two')
+  expect(await readFile(join(selected.worktree.directory, 'file.txt'), 'utf8')).toBe('latest main')
+  expect(await git(base, 'show', 'agent/task-one:file.txt')).toBe('initial')
+  run.mockClear()
+  await prepareWorktree(selected, 'task-one', 'main', run, verify, false, 'task-two')
+  expect(await git(selected.worktree.directory, 'branch', '--show-current')).toBe('agent/task-one')
+  expect(await readFile(join(selected.worktree.directory, 'file.txt'), 'utf8')).toBe('initial')
+  expect(run.mock.calls.some(([argv]) => argv[1] === 'fetch')).toBe(false)
+  await rm(selected.worktree.directory, { recursive: true })
+  await expect(prepareWorktree(selected, 'task-three', 'main', run, verify, true, 'task-one')).rejects.toThrow('已丢失')
+})
+
+it('preserves dirty, untracked, foreign and offline topic checkouts on a failed handoff', async () => {
+  const selected = checkout(), target = selected.worktree.directory
+  await prepareWorktree(selected, 'task-one', 'main', run, verify, true)
+  await writeFile(join(target, 'file.txt'), 'unfinished')
+  await expect(prepareWorktree(selected, 'task-two', 'main', run, verify, true, 'task-one')).rejects.toThrow('存在修改')
+  expect(await readFile(join(target, 'file.txt'), 'utf8')).toBe('unfinished')
+  await git(target, 'restore', 'file.txt')
+  await writeFile(join(target, 'untracked'), 'keep')
+  await expect(prepareWorktree(selected, 'task-two', 'main', run, verify, true, 'task-one')).rejects.toThrow('未跟踪')
+  await rm(join(target, 'untracked'))
+  await expect(prepareWorktree(selected, 'task-two', 'main', run, verify, true, 'foreign')).rejects.toThrow('不属于')
+  const offline = async (argv: string[], cwd: string) => { if (argv[1] === 'fetch') throw new Error('offline'); return run(argv, cwd) }
+  await expect(prepareWorktree(selected, 'task-two', 'main', offline, verify, true, 'task-one')).rejects.toThrow('offline')
+  expect(await git(target, 'branch', '--show-current')).toBe('agent/task-one')
+})
+
+it('refuses handoff while a container mounts the topic directory or ignored files would be overwritten', async () => {
+  const selected = checkout(), target = selected.worktree.directory
+  await prepareWorktree(selected, 'task-one', 'main', run, verify, true)
+  const mounted = async (argv: string[], cwd: string) => {
+    if (argv[0] === 'sh') return '/bin/docker'
+    if (argv[0] === '/bin/docker') return argv[2] === 'ls' ? 'abc123' : JSON.stringify({ name: '/service', mounts: [{ Source: target, Destination: '/app' }] })
+    return run(argv, cwd)
+  }
+  await expect(prepareWorktree(selected, 'task-two', 'main', mounted, verify, true, 'task-one')).rejects.toThrow('仍挂载')
+  await writeFile(join(base, 'artifact'), 'tracked on main')
+  await git(base, 'add', 'artifact'); await git(base, 'commit', '-m', 'track artifact'); await git(base, 'push', remote, 'main')
+  await writeFile(join(target, '.gitignore'), 'artifact\n')
+  await git(target, 'add', '.gitignore'); await git(target, 'commit', '-m', 'ignore artifact')
+  await writeFile(join(target, 'artifact'), 'local ignored data')
+  await expect(prepareWorktree(selected, 'task-two', 'main', run, verify, true, 'task-one')).rejects.toThrow()
+  expect(await readFile(join(target, 'artifact'), 'utf8')).toBe('local ignored data')
+  expect(await git(target, 'branch', '--show-current')).toBe('agent/task-one')
+})
+
+it('reuses only matching retained repository paths and excludes directories cleaned by a later ticket', () => {
+  const bound = { ...repo, localPath: base }
+  const settings = SettingsSchema.parse({ sources: {
+    git: { enabled: true, config: { repositories: [bound] } },
+    feishu: { enabled: true, config: { chats: [{ chatId: 'oc_team', repositories: repo.id, primaryRepository: repo.id }] } },
+  } })
+  const trigger = feishu('1', 'work'), execution = { name: 'task-one', directory: '/legacy', assignment: '' }
+  const first = worktreeExecution(execution, [bound], settings, trigger)
+  const next = { ...execution, name: 'task-two' }
+  expect(worktreeExecution(next, [bound], settings, trigger, [first]).directory).toBe(first.directory)
+  const cleaned = { ...first, repositories: first.repositories!.map(item => ({ ...item, worktree: { ...item.worktree!, cleanedAt: 'today' } })) }
+  expect(worktreeExecution(next, [bound], settings, trigger, [cleaned, first]).directory).toBe(join(root, 'idcrm-worktrees/task-two'))
+  const changed = { ...bound, worktreeRoot: join(root, 'new-root') }
+  settings.sources.git!.config.repositories = [changed]
+  expect(worktreeExecution(next, [changed], settings, trigger, [first]).directory).toBe(join(root, 'new-root/task-two'))
+  const moved = { ...bound, localPath: join(root, 'moved') }
+  settings.sources.git!.config.repositories = [moved]
+  expect(worktreeExecution(next, [moved], settings, trigger, [first]).directory).toBe(join(root, 'moved-worktrees/task-two'))
+  const other = { ...bound, url: 'https://github.com/acme/other' }
+  settings.sources.git!.config.repositories = [other]
+  expect(worktreeExecution(next, [other], settings, trigger, [first]).directory).toBe(join(root, 'idcrm-worktrees/task-two'))
+})
+
 it('refuses origin mismatches, missing bases and checkout subdirectories', async () => {
   const selected = checkout()
   await git(base, 'remote', 'set-url', 'origin', 'https://github.com/acme/other')
