@@ -621,10 +621,12 @@ describe('a worker whose work runs in the background', () => {
     const one = h.runtime.store.tickets.list().find(ticket => ticket.id !== queued.ticket.id)!
     const sessionId = `worker-${one.id}`
     const [first, second] = [h.jobs.run(sessionId), h.jobs.run(sessionId)]
-    h.jobs.service.kill.mockImplementationOnce(() => { throw new Error('No such process') })
+    h.jobs.service.kill.mockImplementationOnce((id: string) => { h.jobs.end(id, 'killed'); throw new Error('No such process') })
     h.runtime.engine.stopTicket(one.id)
     await vi.waitFor(() => expect(h.jobs.service.kill).toHaveBeenCalledWith(second, sessionId, expect.any(String)))
     expect(h.jobs.service.kill).toHaveBeenCalledWith(first, sessionId, expect.any(String))
+    // The health detail names what the stop failed on, not only that it failed.
+    await vi.waitFor(() => expect(h.runtime.health.worker).toMatchObject({ state: 'error', detail: expect.stringContaining('No such process') }))
   })
 })
 describe('what a worker read', () => {

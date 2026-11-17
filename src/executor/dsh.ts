@@ -23,6 +23,10 @@ import type { HealthEntry } from '../infra/health.ts'
 import { cancelled, collectJob, hasLiveChildren, killJobs, runningJobs, stopBackground, stopSubagents, until, untilQuiet } from './background.ts'
 
 const now = (): string => new Date().toISOString()
+/** The text of `error`, and of what an `AggregateError` collected, which its own message leaves out. */
+const failureText = (error: unknown): string => error instanceof AggregateError
+  ? [String(error), ...error.errors.map(failureText)].join('\n')
+  : error instanceof Error ? error.message : String(error)
 /** Returns the worker session ID (`worker-<ticketId>`) for a ticket. */
 export const workerSessionId = (ticketId: string): string => `worker-${ticketId}`
 /** Returns the ticket ID for a worker session ID (`worker-<ticketId>`), or undefined for non-worker sessions. */
@@ -621,7 +625,7 @@ export class DshExecutor implements Executor {
   private background(work: Promise<void>): Promise<void> {
     const { health } = this.host
     return work.then(() => { if (health.get()?.state === 'error') health.set({ state: 'ready', detail: 'Worker events are handled', at: now() }) },
-      (error: unknown) => { health.set({ state: 'error', detail: String(error), at: now() }) })
+      (error: unknown) => { health.set({ state: 'error', detail: failureText(error), at: now() }) })
   }
   /**
    * Checks whether `error` is a transient failure with retry attempts remaining under `key`, mutating `this.transient`:
