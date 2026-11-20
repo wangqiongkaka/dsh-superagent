@@ -43,6 +43,21 @@ export class Replies extends EnginePart {
   acknowledgeAccepted(ticketId: string, trigger: Trigger, text: string): void {
     if (trigger.channel && trigger.human) this.options.outbox.send({ id: key('ack', trigger.id), channel: trigger.channel, text, kind: 'acknowledgement', ticketId })
   }
+  /** Queue a failure on the original human request, never on a channel attached to the ticket later. */
+  reportFailure(ticket: Ticket, assignmentId: string, reason?: string | { zh: string; en: string }): void {
+    const origin = this.source(ticket)
+    if (!origin?.human || !origin.channel) return
+    const chinese = /\p{Script=Han}/u.test(origin.text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(origin.text)
+    const detail = typeof reason === 'string' ? reason.trim() : reason?.[chinese ? 'zh' : 'en']
+    // Public details are deliberately separate from the internal summary. Drop credential-like content even in that field.
+    const sensitive = /[\r\n]|https?:\/\/|(?:^|\s)(?:[a-z]:[\\/]|~?\/)\S|\bbearer\b|(?:authorization|password|secret|token|api[-_ ]?key)\s*[:=]|\b(?:gh[pousr]_|github_pat_|sk-|xox[bp]-)\S|-----BEGIN /i
+    const safe = detail && !sensitive.test(detail) ? detail.slice(0, 72).replace(/[`<>@]/g, '').trim() : ''
+    const id = ticket.id.slice(0, 12)
+    const text = chinese
+      ? `工单 ${id} 执行失败。${safe || '执行器未能完成任务。'} 处理后可重试。`
+      : `Ticket ${id} failed. ${safe || 'The executor could not finish the task.'} You can retry after resolving the issue.`
+    this.options.outbox.send({ id: key('ticket-failure', assignmentId, text), channel: origin.channel, text, kind: 'reply', ticketId: ticket.id })
+  }
   /** Withdraw a ticket's question for a person from the outbox, unless it went out already. */
   withdrawAttention(attentionId: string): void { this.options.outbox.withdraw(key('attention-reply', attentionId)) }
   private acknowledge(request: Extract<ReplyRequest, { purpose: 'acknowledgement' }>): Reply {

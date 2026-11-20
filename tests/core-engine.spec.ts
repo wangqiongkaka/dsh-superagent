@@ -1060,6 +1060,25 @@ describe('automatic input', () => {
   })
 })
 describe('replies', () => {
+  it('only publishes a failure to its original request and drops unsafe details', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const source = trigger('1')
+    const later = trigger('2', { threads: [{ source: 'chat', id: 't2' }], channel: { source: 'chat', thread: 't2', address: { message: '2' } } })
+    h.engine.receive(later)
+    h.engine.attach(ticketId, later.id)
+    const fail = () => h.engine.report(ticketId, { state: 'failed', summary: 'private stderr', failureReason: 'token=private-value' })
+    fail(); fail()
+    expect(h.outbox.filter(message => message.kind === 'reply')).toEqual([
+      expect.objectContaining({ channel: source.channel, text: expect.stringContaining('The executor could not finish the task.') }),
+    ])
+    // An attached channel alone never becomes a failure destination when the origin cannot be replied to.
+    h.repo.triggers.save({ ...source, human: false })
+    h.engine.retryTicket(ticketId); h.settle()
+    fail()
+    expect(h.outbox.filter(message => message.kind === 'reply')).toHaveLength(1)
+  })
+
   it('acknowledges a person\'s message that reached an open ticket once, and refuses others', () => {
     const h = harness()
     const ticketId = accepted(h).ticketId!

@@ -133,6 +133,8 @@ When an Executor Session reports `blocked` or `failed`, or fails to start or err
 
 A passing failure of the model provider or the network, an HTTP 408, 429 or 5xx or a refused, reset or timed-out connection, is tried again first, three times with a growing backoff: a launch runs again, and a worker whose turn failed is told to go on; a failed prepare command is not tried again.
 
+When a failure is recorded, the Outbox queues a short reply to the original human request, including its Feishu topic when applicable. Automatic retries stay internal until they fail. The public reply uses a safe failure category or the worker's separate `failure_reason`; the internal diagnostic summary stays on the Ticket.
+
 Once failed, CI and bot messages are recorded on it, but they are not delivered and do not wake the Session.
 
 Its tools stay available, so a person can continue in the Session directly.

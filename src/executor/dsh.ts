@@ -369,7 +369,7 @@ export class DshExecutor implements Executor {
       // ticket is marked failed and waits until new human input or an explicit retry arrives.
       if (this.host.closing() || error instanceof Later) throw error
       if (!(error instanceof PrepareFailed) && this.retries(`launch:${assignmentId}`, error)) throw error
-      this.launchFailed(ticketId, assignmentId, error)
+      this.failed(ticketId, assignmentId, error, true)
     } finally { this.launching.delete(ticketId); this.preparing.delete(ticketId); this.slots.free(ticketId) }
   }
   /**
@@ -549,16 +549,22 @@ export class DshExecutor implements Executor {
     if (!runningAssignment(ticket)) return false
     return this.host.context.agents.get(workerSessionId(ticket.id) as SessionId)?.status === 'running' || this.settling.has(ticket.id)
   }
-  /** Marks a ticket failed after its launch fails; the ticket waits until new human input or an explicit retry arrives. */
-  private launchFailed(ticketId: string, assignmentId: string, error: unknown): void {
-    const ticket = this.host.store.tickets.get(ticketId)
-    if (!ticket || !liveTicket(ticket) || latestAssignment(ticket)?.id !== assignmentId) return
-    this.failed(ticketId, String(error))
-  }
-  /** Records a `failed` report on the ticket and relays the failure to the main Session in one transaction. */
-  private failed(ticketId: string, summary: string): void {
+  /** Records and relays failures only for the assignment that encountered them. */
+  private failed(ticketId: string, assignmentId: string, error: unknown, launching = false): void {
     this.host.store.atomic(() => {
-      const updated = this.host.engine.report(ticketId, { state: 'failed', summary })
+      const ticket = this.host.store.tickets.get(ticketId)
+      if (!ticket || !liveTicket(ticket) || latestAssignment(ticket)?.id !== assignmentId) return
+      const summary = String(error)
+      const failureReason = error instanceof PrepareFailed
+        ? { zh: '工作区准备失败，请检查仓库和准备命令。', en: 'Workspace preparation failed. Check the repository and setup command.' }
+        : transient(error)
+          ? { zh: '网络或模型服务暂不可用。', en: 'The network or model service is unavailable.' }
+          : error instanceof TypeError
+            ? { zh: '执行工具接口异常（TypeError），请检查运行环境。', en: 'Executor tool interface error (TypeError). Check the runtime.' }
+            : launching
+              ? { zh: '执行器启动失败，请检查运行环境。', en: 'The executor could not start. Check the runtime.' }
+              : { zh: '执行器运行出错，请检查工单诊断。', en: 'The executor encountered an error. Check the ticket diagnostics.' }
+      const updated = this.host.engine.report(ticketId, { state: 'failed', summary, failureReason })
       this.relay(resultRelay(updated, 'failed', summary))
     })
   }
@@ -660,7 +666,7 @@ export class DshExecutor implements Executor {
       const assignment = ticket && runningAssignment(ticket)
       if (!ticket || !assignment || !liveTicket(ticket) || this.host.closing()) return
       if (this.retries(assignment.id, error)) { this.resumeAfter(ticket.id, assignment.id, error); return }
-      void this.background(Promise.resolve().then(() => { this.failed(ticket.id, String(error)) }))
+      void this.background(Promise.resolve().then(() => { this.failed(ticket.id, assignment.id, error) }))
     }))
   }
   /** Unsubscribes from host agent events and clears any pending transient-retry timers. */
@@ -723,7 +729,7 @@ export class DshExecutor implements Executor {
       }
       const sent = this.host.sessions.prompt(sessionId, `retry:${assignmentId}:${tries}`, text, 'queue')
       void this.background(sent.finally(() => { if (waking) this.slots.free(ticketId); this.resuming.delete(assignmentId) })
-        .catch(failure => { this.failed(ticketId, String(failure)) }))
+        .catch(failure => { this.failed(ticketId, assignmentId, failure) }))
     }
     this.after(TRANSIENT_BACKOFF_MS * 2 ** (tries - 1), go)
   }

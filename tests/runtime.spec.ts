@@ -1556,11 +1556,28 @@ it('relays the status-request hint when a worker\'s turn ends with no text and n
     summary: expect.stringContaining('orchestrator_ticket_request_status') })
 })
 
-it('fails a ticket at once on a worker error that is not passing, and relays it', async () => {
-  const { ticket, sessionId } = await acceptedTicket()
-  ;(runtime as unknown as { ctx: Context }).ctx.emit('agent/error', { agent: agents.get(sessionId), turn: 1, step: 1, error: new Error('Invalid tool schema') } as never)
-  await vi.waitFor(() => expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed', summary: expect.stringContaining('Invalid tool schema') }))
+it('relays a worker error internally and sends its safe failure reason once to the original Feishu topic', async () => {
+  const { ticket, sessionId } = await acceptedTicket(feishu('3', '@bot 修回归', { root_id: 'om_1' }))
+  const fail = () => runtimeContext.emit('agent/error', { agent: agents.get(sessionId), turn: 1, step: 1, error: new TypeError('Invalid tool schema with secret=private-test-value') } as never)
+  fail(); fail()
+  await vi.waitFor(() => expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed', summary: expect.stringContaining('private-test-value') }))
+  await runtime.idle()
   expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', ticket: { ticket_id: ticket.id }, state: 'failed' })
+  const replies = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args)
+    .filter(args => args[1] === '+messages-reply' && args.some(arg => arg.includes('执行失败')))
+  expect(replies).toHaveLength(1)
+  expect(replies[0]).toEqual(expect.arrayContaining(['--message-id', 'om_3', '--reply-in-thread', expect.stringContaining('TypeError')]))
+  expect(replies[0]!.join(' ')).not.toContain('private-test-value')
+})
+
+it('publishes the worker\'s separate failure reason and keeps its internal summary private', async () => {
+  const { sessionId } = await acceptedTicket()
+  await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'Working' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'failed', summary: 'private internal logs', failure_reason: '缺少部署权限，请管理员检查。' })
+  const replies = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  expect(replies).toHaveLength(2)
+  expect(replies.at(-1)).toEqual(expect.arrayContaining(['--message-id', 'om_1', expect.stringContaining('缺少部署权限')]))
+  expect(replies.at(-1)!.join(' ')).not.toContain('private internal logs')
 })
 
 it('refuses the main Session a bash command that runs sleep and a long job wait, as reports arrive by themselves, and no worker', async () => {
@@ -1658,14 +1675,18 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
     })
     const { ticket } = await acceptedTicket(feishu(String(30 + index), `@bot 修 ${index}`, { root_id: undefined }))
     await runtime.idle()
+    const failures = () => vi.mocked(Commands.prototype.lark).mock.calls.filter(([args]) =>
+      args[1] === '+messages-reply' && args.includes(`om_${30 + index}`) && args.some(arg => arg.includes('执行失败')))
     let now = Date.now()
     for (let attempt = 0; attempt < 3; attempt++) {
       expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toBeUndefined()
+      expect(failures()).toHaveLength(0)
       now += 5000 * 2 ** attempt + 1000
       await later(now)
     }
     expect(tries).toBe(4)
     expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'failed' })
+    expect(failures()).toHaveLength(1)
     controller.resolveAgent.mockImplementation(original)
   }
   // A prepare command whose output names a passing failure is not run again on its own.
