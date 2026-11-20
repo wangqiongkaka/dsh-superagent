@@ -79,6 +79,7 @@ async function receive(trigger: Trigger, target = runtime) {
   return result
 }
 let services: Record<string, unknown>
+let runtimeContext: Context
 /** DSH's job registry the Runtime's Executor reads its workers' shell jobs from. */
 let jobs: ReturnType<typeof jobRegistry>
 /** What worker commands of the startup checks print, by argv; an Error makes the command fail with its message. */
@@ -159,7 +160,7 @@ beforeEach(async () => {
     [HELPERS]: `file:${workerGitConfig(directory)}\0${credentialHelper(AGENT())}\0`,
     [SCOPED]: `global\0credential.helper\n\0global\0credential.https://github.com.helper\n${credentialHelper(AGENT())}\0`,
   }
-  const ctx = new Context()
+  const ctx = runtimeContext = new Context()
   agents = new Map()
   tools = new Map()
   sections = new Map()
@@ -1878,6 +1879,9 @@ it('rejects cleanup of open tickets and ended tickets with a running session', a
 })
 
 it('serializes same-topic worktrees across tickets, persists ownership and protects old sessions and cleanup', async () => {
+  let residentChild = false
+  const listDescendants = vi.fn(async () => residentChild ? [{ kind: 'child', id: 'worker-child', activity: 'running' }] : [])
+  runtimeContext.reflect.provide('subagents', { listDescendants, waitForTreeWork: async () => false, drainDescendants: async () => {} })
   const settings = runtime.store.settings()
   runtime.store.saveSettings({ ...settings, sources: { ...settings.sources,
     git: { enabled: true, config: { repositories: [{ id: 'service', provider: 'github', url: 'https://github.com/acme/service', cli: AGENT(), localPath: join(directory, 'base') }] } },
@@ -1904,6 +1908,12 @@ it('serializes same-topic worktrees across tickets, persists ownership and prote
   expect(agents.has(next.sessionId)).toBe(false)
   await runTool(first.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'done' })
   agents.get(first.sessionId)!.status = 'idle'
+  residentChild = true
+  runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
+  await runtime.pump(); await runtime.idle()
+  expect(listDescendants).toHaveBeenCalledWith(first.sessionId)
+  expect(agents.has(next.sessionId)).toBe(false)
+  residentChild = false
   const remove = vi.spyOn(worktrees, 'removeWorktree').mockResolvedValue(first.ticket.execution!.directory)
   expect(await runtime.executor.cleanupWorktrees(first.ticket.id)).toMatchObject([{ removed: false, reason: expect.stringContaining('等待使用') }])
   await vi.waitFor(async () => {

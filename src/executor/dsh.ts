@@ -453,14 +453,14 @@ export class DshExecutor implements Executor {
       this.settling.get(ticket.id)?.abort()
       if (!ownTurn) this.host.context.agents.get(sessionId as SessionId)?.cancel({ kind: 'user' }, { keepInbox: false })
       // Its shell jobs and subagents stop with it, also those of a worker that ends its own turn.
-      this.stopWork(ticket.id, reason)
+      this.stopWork(ticket.id, reason, false, !!ticket.ended)
       this.track(ticket.id, this.host.sessions.endWorker(sessionId, assignment.id, ownTurn))
       this.left.get(ticket.id)?.collect.abort(); this.left.delete(ticket.id); this.personal.delete(ticket.id)
     })
   }
   /** Stop what a ticket's worker runs in the background (see `stopBackground`). */
-  private stopWork(ticketId: string, reason: string, keepInbox = false): void {
-    this.track(ticketId, stopBackground(this.host.context, workerSessionId(ticketId), reason, keepInbox))
+  private stopWork(ticketId: string, reason: string, keepInbox = false, ended = false): void {
+    this.track(ticketId, stopBackground(this.host.context, workerSessionId(ticketId), reason, keepInbox, ended))
   }
   /** A stop of a ticket's background work, which a launch or a delivery of the ticket waits for while it runs. */
   private track(ticketId: string, stop: Promise<void>): void {

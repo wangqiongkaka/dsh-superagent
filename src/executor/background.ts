@@ -14,11 +14,23 @@ interface Jobs {
   readonly events: { subscribe(filter: { owner: string }, listener: (event: { type: string }) => void): () => void }
 }
 /** What the Executor uses of DSH's subagents: joining a worker's subagents that work, its subagents, and releasing them. */
-interface Subagents {
+interface LegacySubagents {
   waitForChildren(parent: Agent): Promise<boolean>
   listChildren(parentSessionId: string): Promise<readonly { id: string }[]>
   drainChildren(parent: Agent, childIds: readonly string[]): Promise<void>
 }
+type Descendant = { id: SessionId } & (
+  { kind: 'child'; activity: 'running' | 'inactive'; mode?: string } |
+  { kind: 'diagnostic'; reason: string }
+)
+/** The tree API in Harness 0.2.2-rc.5 and later. */
+interface TreeSubagents {
+  waitForTreeWork(root: Agent): Promise<boolean>
+  listDescendants(rootSessionId: string): Promise<readonly Descendant[]>
+  interrupt(target: SessionId, authority: { kind: 'ancestor'; agent: Agent }): void
+  drainDescendants(roots: readonly Agent[]): Promise<void>
+}
+type Subagents = LegacySubagents | TreeSubagents
 /** How long a stop waits for a killed job to end, collecting its end so the worker is not woken to hear of it. */
 const KILL_WAIT_MS = 10_000
 /** How long a release of subagents may take; it can hold up a shutdown, so DSH's own callers bound it too. */
@@ -49,7 +61,8 @@ const joins = new WeakMap<Agent, Promise<boolean>>()
 function childrenEnd(subagents: Subagents, agent: Agent): Promise<boolean> {
   let join = joins.get(agent)
   if (!join) {
-    join = subagents.waitForChildren(agent).finally(() => { joins.delete(agent) })
+    const wait = 'listChildren' in subagents ? subagents.waitForChildren(agent) : subagents.waitForTreeWork(agent)
+    join = wait.finally(() => { joins.delete(agent) })
     joins.set(agent, join)
   }
   return join
@@ -136,15 +149,19 @@ export async function collectJob(ctx: Context, sessionId: string, job: { id: str
 /**
  * Release the worker's live subagents, for a bounded time. DSH delivers each one's end to the worker before the release
  * returns, which wakes it, so the worker's turn is cancelled after, keeping its inbox when `keepInbox`, and the stop ends
- * with that turn. Its Session still admits subagents.
+ * with that turn. The tree API closes admissions permanently for the loaded root, so use it only on ticket end.
  */
-export async function stopSubagents(ctx: Context, agent: Agent, keepInbox = false): Promise<void> {
+export async function stopSubagents(ctx: Context, agent: Agent, keepInbox = false, ended = false): Promise<void> {
   const subagents = subagentsOf(ctx)
   if (!subagents) return
-  // The catalog lists every subagent the Session had; one that ended has no agent.
-  const live = (await subagents.listChildren(agent.id)).map(child => child.id).filter(id => ctx.agents.get(id as SessionId))
-  if (!live.length) return
-  try { await until(subagents.drainChildren(agent, live), undefined, DRAIN_LIMIT_MS) }
+  const stop = 'listChildren' in subagents
+    ? await subagents.listChildren(agent.id).then(children => {
+      const live = children.map(child => child.id).filter(id => ctx.agents.get(id as SessionId))
+      return live.length ? () => subagents.drainChildren(agent, live) : undefined
+    })
+    : await stopTree(ctx, subagents, agent, ended)
+  if (!stop) return
+  try { await until(stop(), undefined, DRAIN_LIMIT_MS) }
   finally {
     if (agent.status !== 'idle') cancelled.add(agent)
     agent.cancel({ kind: 'user' }, { keepInbox })
@@ -152,20 +169,71 @@ export async function stopSubagents(ctx: Context, agent: Agent, keepInbox = fals
   }
 }
 
+/** A tree catalog can include historical entries and external workers with no loaded Agent. */
+async function descendants(ctx: Context, subagents: TreeSubagents, sessionId: string): Promise<readonly Descendant[]> {
+  try { return await subagents.listDescendants(sessionId) }
+  catch (error) {
+    if (!ctx.agents.get(sessionId as SessionId)
+      && error instanceof Error && 'code' in error && error.code === 'SESSION_QUERY_SESSION_NOT_FOUND') return []
+    throw error
+  }
+}
+
+const resident = (ctx: Context, child: Descendant): boolean => !!ctx.agents.get(child.id)
+  || child.kind === 'child' && child.activity === 'running'
+
+/** Check for activations in startup or running externally before they appear as loaded sessions. */
+async function treeBusy(subagents: TreeSubagents, agent: Agent): Promise<boolean> {
+  const settled = await until(childrenEnd(subagents, agent).then(joined => ({ joined })), undefined, 1000)
+  return settled === false || settled.joined
+}
+
+/** Interrupt a reusable root's descendants without closing admission; release a finished ticket's tree. */
+async function stopTree(ctx: Context, subagents: TreeSubagents, agent: Agent, ended: boolean): Promise<(() => Promise<void>) | undefined> {
+  const children = await descendants(ctx, subagents, agent.id)
+  if (ended) {
+    if (children.some(child => child.kind === 'diagnostic' || resident(ctx, child)) || await treeBusy(subagents, agent))
+      return () => subagents.drainDescendants([agent])
+    return
+  }
+  // shortcut: idle descendants stay resident after interrupt; release them at ticket end until Harness offers a reusable drain.
+  const live = children.filter(child => resident(ctx, child) || child.kind === 'child' && child.mode === 'external')
+  if (!live.length) return
+  return async () => {
+    const stops = live.map(async child => {
+      subagents.interrupt(child.id, { kind: 'ancestor', agent })
+      await killJobs(ctx, child.id, 'Parent worker stopped')
+    })
+    const failures = (await Promise.allSettled(stops)).flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length) throw new AggregateError(failures, `Stopping subagents of ${agent.id} failed`)
+    await childrenEnd(subagents, agent)
+  }
+}
+
 /**
  * Stop what a worker runs in the background once its Assignment ends: kill its shell jobs and release its subagents (see
  * `stopSubagents`). A Session not loaded has no subagent at work. One failure stops nothing else.
  */
-export async function stopBackground(ctx: Context, sessionId: string, reason: string, keepInbox = false): Promise<void> {
+export async function stopBackground(ctx: Context, sessionId: string, reason: string, keepInbox = false, ended = false): Promise<void> {
   const failures: unknown[] = []
   await killJobs(ctx, sessionId, reason).catch((error: unknown) => { failures.push(error) })
   const agent = ctx.agents.get(sessionId as SessionId)
-  if (agent) await stopSubagents(ctx, agent, keepInbox).catch((error: unknown) => { failures.push(error) })
+  if (agent) await stopSubagents(ctx, agent, keepInbox, ended).catch((error: unknown) => { failures.push(error) })
   if (failures.length) throw new AggregateError(failures, `Stopping the background work of ${sessionId} failed`)
 }
 
 /** A loaded child session still owns a workspace even while its turn is idle. */
 export async function hasLiveChildren(ctx: Context, sessionId: string): Promise<boolean> {
-  const children = await subagentsOf(ctx)?.listChildren(sessionId) ?? []
+  const subagents = subagentsOf(ctx)
+  if (!subagents) return false
+  if (!('listChildren' in subagents)) {
+    const children = await descendants(ctx, subagents, sessionId)
+    if (children.some(child => resident(ctx, child))) return true
+    const diagnostic = children.find(child => child.kind === 'diagnostic')
+    if (diagnostic) throw new Error(`无法确认子会话 ${diagnostic.id} 已释放（${diagnostic.reason}），保留 worktree。`)
+    const agent = ctx.agents.get(sessionId as SessionId)
+    return agent ? treeBusy(subagents, agent) : false
+  }
+  const children = await subagents.listChildren(sessionId)
   return children.some(child => !!ctx.agents.get(child.id as SessionId))
 }

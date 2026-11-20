@@ -2,7 +2,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import { expect, it, vi } from 'vitest'
-import { stopSubagents, untilQuiet } from '../src/executor/background.ts'
+import { hasLiveChildren, stopSubagents, untilQuiet } from '../src/executor/background.ts'
 import { jobRegistry } from './fixtures/host.ts'
 
 /** A context with DSH's job registry and subagents, and an idle worker agent with one live subagent, `child-1`. */
@@ -10,7 +10,10 @@ function setup(waitForChildren: (agent: Agent) => Promise<boolean>, drainChildre
   const jobs = jobRegistry()
   const agent = { id: 'worker-t1', status: 'idle', whenIdle: async () => {}, inbox: { nextTurn: [], nextStep: [] }, cancel: vi.fn() } as unknown as
     Agent & { status: string; cancel: ReturnType<typeof vi.fn> }
-  const subagents = { waitForChildren: vi.fn(waitForChildren), listChildren: async () => [{ id: 'child-1' }], drainChildren: vi.fn(drainChildren) }
+  const subagents = {
+    waitForChildren: vi.fn(waitForChildren), listChildren: async () => [{ id: 'child-1' }], drainChildren: vi.fn(drainChildren),
+    listDescendants: vi.fn(async () => { throw new Error('Prefer the direct-child API when it exists') }),
+  }
   const services: Record<string, unknown> = { jobs: jobs.service, subagents }
   const ctx = { get: (name: string) => services[name], agents: { get: () => agent } } as unknown as Context
   return { ctx, agent, jobs, subagents }
@@ -74,4 +77,45 @@ it('gives up a release of subagents that does not end within 10 seconds, and can
     await stopping
   } finally { vi.useRealTimers() }
   expect(agent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+})
+
+it('uses the desktop tree API for workspace occupancy and waiting', async () => {
+  const { agent } = setup(async () => false)
+  const agents = new Map([[agent.id, agent], ['child-1', agent]])
+  const service = {
+    listDescendants: vi.fn(async () => [{ kind: 'child', id: 'child-1', activity: 'inactive' }]),
+    waitForTreeWork: vi.fn(async () => false),
+  }
+  const ctx = { get: (name: string) => name === 'subagents' ? service : undefined, agents } as unknown as Context
+  await expect(hasLiveChildren(ctx, agent.id)).resolves.toBe(true)
+  agents.delete('child-1')
+  await expect(hasLiveChildren(ctx, agent.id)).resolves.toBe(false)
+  await expect(untilQuiet(ctx, agent, new AbortController().signal)).resolves.toBe(true)
+  expect(service.waitForTreeWork).toHaveBeenCalledWith(agent)
+})
+
+it('distinguishes an uncreated worker from a descendant lookup failure', async () => {
+  const listDescendants = vi.fn().mockRejectedValueOnce(Object.assign(new Error('missing session'), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' }))
+    .mockRejectedValueOnce(new Error('catalog unavailable'))
+  const ctx = { get: () => ({ listDescendants }), agents: new Map() } as unknown as Context
+  await expect(hasLiveChildren(ctx, 'worker-t1')).resolves.toBe(false)
+  await expect(hasLiveChildren(ctx, 'worker-t1')).rejects.toThrow('catalog unavailable')
+})
+
+it('interrupts live descendants for a handoff and only closes the tree when ending its ticket', async () => {
+  const { agent } = setup(async () => false)
+  const service = {
+    listDescendants: async () => [{ kind: 'child', id: 'child-1', activity: 'running' }],
+    waitForTreeWork: vi.fn(async () => false),
+    interrupt: vi.fn(),
+    drainDescendants: vi.fn(async () => {}),
+  }
+  const ctx = { get: (name: string) => name === 'subagents' ? service : undefined, agents: new Map([[agent.id, agent]]) } as unknown as Context
+  await stopSubagents(ctx, agent, true)
+  expect(service.interrupt).toHaveBeenCalledWith('child-1', { kind: 'ancestor', agent })
+  expect(service.waitForTreeWork).toHaveBeenCalledWith(agent)
+  expect(service.drainDescendants).not.toHaveBeenCalled()
+  expect(agent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: true })
+  await stopSubagents(ctx, agent, false, true)
+  expect(service.drainDescendants).toHaveBeenCalledWith([agent])
 })
