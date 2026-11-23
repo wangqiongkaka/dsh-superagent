@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
 import { renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+import type { SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import * as worktrees from '../src/executor/worktrees.ts'
 import { Runtime } from '../src/app/runtime.ts'
 import { jobRegistry, receiveAndRoute } from './fixtures/host.ts'
@@ -90,14 +91,19 @@ const OTHER = () => join(directory, 'other-gh')
 const BOT = () => join(directory, 'lark-bot')
 const HELPERS = 'git config -z --show-origin --get-all credential.https://github.com.helper'
 const SCOPED = 'git config -z --show-scope --get-regexp ^(credential\\..*|http\\..*extraheader)$'
-const subprocess = { spawn: vi.fn((spec: { argv: readonly string[] }) => {
+const spawn = vi.fn((spec: Pick<SubprocessSpawnSpec, 'argv' | 'env'>) => {
   // Strip leading `env` and `KEY=VALUE` arguments before looking up the command response.
   const argv = [...spec.argv]
   while (argv[0] === 'env' || /^[A-Z_]+=/.test(argv[0] ?? '')) argv.shift()
   const answer = answers[argv.join(' ')] ?? ''
   const reader = (text: string) => ({ readFrom: () => ({ text, nextOffset: text.length, lossy: false }) })
   return { done: Promise.resolve({ exitCode: answer instanceof Error ? 1 : 0, signal: null }), collected: { stdout: reader(answer instanceof Error ? '' : answer), stderr: reader(answer instanceof Error ? answer.message : '') } }
-}) }
+})
+function shellEnvironment(sessionId: string): NodeJS.ProcessEnv | undefined {
+  runtimeContext.subprocess.spawn({ argv: ['/bin/bash', '-c', 'git config --get credential.helper'], cwd: directory,
+    env: { DSH_SESSION_ID: sessionId }, graceMs: 100, stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 }, stderr: { maxBytes: 1024 } } })
+  return spawn.mock.lastCall?.[0].env
+}
 /** Source account overrides for test setup; `feishu: null` disables the Feishu source. */
 interface Accounts { github?: Record<string, unknown>; feishu?: Record<string, unknown> | null; git?: false }
 function seed(store: Store, accounts: Accounts = {}): void {
@@ -110,7 +116,7 @@ let restarts: ReturnType<typeof vi.fn<() => void>>
 async function restart(machine: Partial<Machine> = {}, accounts: Accounts = {}): Promise<Runtime> {
   await runtime.stop()
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store, accounts); store.close()
-  const ctx = new Context()
+  const ctx = runtimeContext = new Context()
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   runtime = new Runtime(ctx, testMachine({ stateDir: directory, ...machine }), restarts)
   return runtime
@@ -211,7 +217,7 @@ beforeEach(async () => {
     inspect: vi.fn(async () => ({ events: [] })),
   }
   jobs = jobRegistry()
-  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
+  services = { agents, llm: { resolveCallConfig: vi.fn(async value => value) }, sessionController: controller, sessionPersistence: { flush: vi.fn(async () => {}), open: vi.fn(async () => ({ read: async () => ({ events: [] }), [Symbol.asyncDispose]: async () => {} })) }, workspaceRegistry: { create: async (cwd: string) => ({ id: cwd }) }, permissionPresets: { set: () => {} }, subprocess: { spawn }, webServer: { host: '127.0.0.1', port: 3082, register: (route: { handler: HttpHandler }) => { http = route.handler; return () => {} } }, jobs: jobs.service }
   for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
   for (const cli of [AGENT(), OTHER(), BOT()]) writeFileSync(cli, '#!/bin/sh\n', { mode: 0o755 })
   const store = new Store(join(directory, 'orchestrator.sqlite')); seed(store); store.close()
@@ -827,11 +833,11 @@ it('keeps pages of Source reads, prompt previews and Feishu message links in mem
   expect(runtime.store.keys('').filter(name => /-read:|source-link:|prompt-preview\//.test(name))).toEqual([])
 })
 
-it('passes the configured Feishu CLI to the process and both native Session prompts', async () => {
+it('passes the configured Feishu CLI to both native Session shells and prompts', async () => {
   const { ticket, sessionId } = await acceptedTicket()
-  expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe(runtime.deployment.feishu!.cli)
   expect(runtime.ticketEnvironment(ticket).find(value => value.key === 'DSH_SUPERAGENT_FEISHU_CLI')?.value).toBe(BOT())
   for (const id of [runtime.masterId, sessionId]) {
+    expect(shellEnvironment(id)?.DSH_SUPERAGENT_FEISHU_CLI).toBe(BOT())
     expect(sections.get(id)!.text({})).toContain(`DSH_SUPERAGENT_FEISHU_CLI = ${JSON.stringify(BOT())}`)
   }
 })
@@ -844,18 +850,17 @@ it.skipIf(!existsSync('/bin/zsh'))('uses the configured bot after zsh startup re
   writeFileSync(join(dotdir, '.zshenv'), `export PATH='${dotdir}:/usr/bin:/bin'\n`)
   const { stdout } = await promisify(execFile)('/bin/zsh', ['-lc',
     'command -v lark-cli; "$DSH_SUPERAGENT_FEISHU_CLI" im +messages-resources-download --as bot'],
-    { env: { ...process.env, ZDOTDIR: dotdir }, timeout: 10000 })
+    { env: { ...process.env, ...shellEnvironment(runtime.masterId), ZDOTDIR: dotdir }, timeout: 10000 })
   expect(stdout.trim().split('\n')).toEqual([other, 'bot:im +messages-resources-download --as bot'])
 })
 
-it('clears an inherited Feishu CLI without a bot and restores it when stopped', async () => {
+it('clears an inherited Feishu CLI in managed shells without a bot', async () => {
   await runtime.stop()
   vi.stubEnv('DSH_SUPERAGENT_FEISHU_CLI', '/operator/other-bot')
   try {
     const next = await restart({}, { feishu: null }); await next.ready
     expect(next.configured()).toBe(true)
-    expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe('')
-    await next.stop()
+    expect(shellEnvironment(next.masterId)?.DSH_SUPERAGENT_FEISHU_CLI).toBe('')
     expect(process.env.DSH_SUPERAGENT_FEISHU_CLI).toBe('/operator/other-bot')
   } finally { vi.unstubAllEnvs() }
 })
@@ -918,7 +923,7 @@ it('reports each setup problem where the operator fixes it, and checks the agent
   await needs('github', 'repositoryReadOnly', { account: 'agent-bot', repository: 'acme/widgets' })
   answers[`${AGENT()} api repos/acme/widgets --jq {name: .full_name, push: .permissions.push}`] = '{"name":"acme/widgets","push":true}\n'
   // The agent CLI runs in the workers' environment: without the shims on PATH.
-  const check = subprocess.spawn.mock.calls.map(([spec]) => spec.argv).find(argv => argv.includes(AGENT()))!
+  const check = spawn.mock.calls.map(([spec]) => spec.argv).find(argv => argv.includes(AGENT()))!
   expect(check[0]).toBe('env')
   expect(check[1]!.startsWith('PATH=')).toBe(true)
   expect(check[1]!.slice('PATH='.length).split(':')).not.toContain(join(directory, 'worker-bin'))
@@ -1022,7 +1027,7 @@ it('pauses and resumes processing as its own action, a setting outside every blo
   expect(runtime.store.settings().paused).toBe(false)
 })
 
-it('runs setup again while the Feishu bot check failed, and restores the process environment when git fails its check', async () => {
+it('runs setup again while the Feishu bot check failed, and leaves the host environment intact when git fails its check', async () => {
   answers[`${BOT()} config strict-mode`] = 'strict-mode: off (source: profile)'
   const next = await restart()
   await next.ready
@@ -1038,7 +1043,7 @@ it('runs setup again while the Feishu bot check failed, and restores the process
   expect(process.env.PATH?.split(':')).not.toContain(join(directory, 'worker-bin'))
 })
 
-it('writes worker shims and the agent environment from the configuration only, and restores the environment on stop', async () => {
+it('writes worker shims without changing the Git environment of the host', async () => {
   const bin = join(directory, 'worker-bin')
   expect(readdirSync(bin).sort()).toEqual(['gh', 'glab', 'lark-cli'])
   expect(readFileSync(join(bin, 'lark-cli'), 'utf8')).toContain(`exec '${BOT()}'`)
@@ -1050,10 +1055,21 @@ it('writes worker shims and the agent environment from the configuration only, a
   expect(readFileSync(join(bin, 'lark-cli'), 'utf8')).toContain('lark-cli is unavailable: this installation has no Feishu bot.')
   expect(readFileSync(join(bin, 'gh'), 'utf8')).toContain(`exec '${AGENT()}'`)
   expect(readFileSync(workerGitConfig(directory), 'utf8')).toContain(`[credential "https://github.com"]\n\thelper = "${credentialHelper(AGENT())}"`)
-  expect(process.env).toMatchObject({ GIT_CONFIG_GLOBAL: workerGitConfig(directory), GIT_CONFIG_NOSYSTEM: '1' })
-  expect(process.env.GIT_AUTHOR_NAME).toBeUndefined()
-  expect(process.env.PATH?.split(':')[0]).toBe(bin)
+  expect(process.env.GIT_CONFIG_GLOBAL).toBe(originalGitConfig)
+  expect(process.env.PATH?.split(':')).not.toContain(bin)
+  await (controller.create as (options: { sessionId: string }) => Promise<void>)({ sessionId: 'ordinary' })
+  expect(shellEnvironment('ordinary')).toEqual({ DSH_SESSION_ID: 'ordinary' })
+  expect(shellEnvironment(next.masterId)).toMatchObject({ GIT_CONFIG_GLOBAL: workerGitConfig(directory), GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0', PATH: expect.stringContaining(bin), GIT_AUTHOR_NAME: undefined })
+  const operatorConfig = join(directory, 'operator-gitconfig')
+  writeFileSync(operatorConfig, '[credential]\n\thelper = operator-fixture\n')
+  const helper = async (id: string) => (await promisify(execFile)('git', ['config', '--get-urlmatch', 'credential.helper', 'https://github.com/acme/widgets.git'], {
+    cwd: directory, env: { ...process.env, GIT_CONFIG_GLOBAL: operatorConfig, GIT_CONFIG_NOSYSTEM: '1', ...shellEnvironment(id) },
+  })).stdout.trim()
+  expect(await helper('ordinary')).toBe('operator-fixture')
+  expect(await helper(next.masterId)).toBe(credentialHelper(AGENT()))
   await next.stop()
+  expect(shellEnvironment(next.masterId)).toEqual({ DSH_SESSION_ID: next.masterId })
   expect(process.env.GIT_CONFIG_GLOBAL).toBe(originalGitConfig)
   expect(process.env.PATH?.split(':')).not.toContain(bin)
 })
@@ -1146,11 +1162,11 @@ it('leaves auto-merge to the delivery requirements, with the agent\'s own gh and
 
 it('runs the prepare command once for a new ticket, under the execution root with the ticket\'s environment, and fails the ticket with its output', async () => {
   const prepare = (command: string) => runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: command } })
-  const runs = () => subprocess.spawn.mock.calls.map(([spec]) => spec as { argv: string[]; cwd: string; env?: Record<string, string> }).filter(spec => spec.argv[0] === 'sh')
+  const runs = () => spawn.mock.calls.map(([spec]) => spec as SubprocessSpawnSpec).filter(spec => spec.argv[0] === 'sh')
   prepare('git -C /srv/widgets worktree add "$DSH_SUPERAGENT_DIR" -b "agent/$DSH_SUPERAGENT_NAME"')
   const { ticket } = await acceptedTicket()
   expect(runs()).toEqual([expect.objectContaining({ argv: ['sh', '-c', 'git -C /srv/widgets worktree add "$DSH_SUPERAGENT_DIR" -b "agent/$DSH_SUPERAGENT_NAME"'], cwd: join(directory, 'work'),
-    env: expect.objectContaining({ DSH_SUPERAGENT_DIR: ticket.execution!.directory, DSH_SUPERAGENT_NAME: ticket.execution!.name, DSH_SUPERAGENT_GITHUB_REPOSITORY: '', DSH_SUPERAGENT_FEISHU_CHAT: CHAT, DSH_SUPERAGENT_REPOSITORIES: expect.stringContaining('acme/service') }) })])
+    env: expect.objectContaining({ GIT_CONFIG_GLOBAL: workerGitConfig(directory), DSH_SUPERAGENT_DIR: ticket.execution!.directory, DSH_SUPERAGENT_NAME: ticket.execution!.name, DSH_SUPERAGENT_GITHUB_REPOSITORY: '', DSH_SUPERAGENT_FEISHU_CHAT: CHAT, DSH_SUPERAGENT_REPOSITORIES: expect.stringContaining('acme/service') }) })])
   // A retry reuses the prepared directory.
   await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'failed', summary: 'offline' })
   await runtime.engine.retryTicket(ticket.id)
@@ -1171,10 +1187,10 @@ it('counts a ticket whose directory the host prepared before prepare commands ex
   const stored = runtime.store.tickets.get(ticket.id)!
   runtime.store.tickets.save({ ...stored, execution: { ...stored.execution!, directory } })
   runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: 'exit 1' } })
-  subprocess.spawn.mockClear()
+  spawn.mockClear()
   await runtime.engine.retryTicket(ticket.id)
   await runtime.idle()
-  expect(subprocess.spawn.mock.calls.some(([spec]) => spec.argv[0] === 'sh')).toBe(false)
+  expect(spawn.mock.calls.some(([spec]) => spec.argv[0] === 'sh')).toBe(false)
   expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.state).toBe('running')
 })
 
@@ -1690,7 +1706,7 @@ it('runs a launch that fails for a passing reason again on the launch backoff th
     controller.resolveAgent.mockImplementation(original)
   }
   // A prepare command whose output names a passing failure is not run again on its own.
-  const runs = () => subprocess.spawn.mock.calls.filter(([spec]) => (spec as { argv: string[] }).argv[0] === 'sh').length
+  const runs = () => spawn.mock.calls.filter(([spec]) => spec.argv[0] === 'sh').length
   runtime.store.saveSettings({ ...runtime.store.settings(), executor: { ...runtime.store.settings().executor, prepare: 'exit 3' } })
   answers['sh -c exit 3'] = new Error('fatal: unable to access: The requested URL returned error: 503')
   const before = runs()
@@ -1812,6 +1828,7 @@ it('gives a subagent of a worker only the worker\'s work tools, and none once th
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: child } as never)
   expect(restricts.get('child-1')).toEqual([{ allow: ['read', 'read_image', 'grep', 'bash', 'job_output', 'job_list', 'job_kill', 'web_search', 'skill'] }])
   expect(guards.get('child-1')!()).toBeUndefined()
+  expect(shellEnvironment('child-1')?.GIT_CONFIG_GLOBAL).toBe(workerGitConfig(directory))
   runtime.engine.stopTicket(ticket.id)
   expect(guards.get('child-1')!()).toBe('Ticket ended; new work needs a new authorized ticket')
   // Another Session's subagent is left as it is.
@@ -1820,6 +1837,7 @@ it('gives a subagent of a worker only the worker\'s work tools, and none once th
   other.session.header = { parentSession: 'someone-else' }
   await (runtime as unknown as { ctx: Context }).ctx.parallel('agent/created', { agent: other } as never)
   expect(restricts.get('child-2')).toBeUndefined()
+  expect(shellEnvironment('child-2')).toEqual({ DSH_SESSION_ID: 'child-2' })
 })
 
 it('gives a subagent of a worker\'s subagent the same work tools and guard', async () => {

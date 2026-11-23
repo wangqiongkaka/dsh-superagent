@@ -12,6 +12,7 @@ import { ExternalTools } from './external-tools.ts'
 import { configurableHarness, HarnessCatalogSchema, harnessOf } from './harness.ts'
 import type { ExternalHarness, HarnessSelection } from '../policy.ts'
 import type { HealthEntry } from '../infra/health.ts'
+import { scopeWorkerSubprocess } from '../infra/environment.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
 import { Later, type Effects } from './effects.ts'
 import { UserError } from '../core/errors.ts'
@@ -41,6 +42,7 @@ export interface SessionsHost {
   rebuilding(): boolean
   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
   environment(ticket: Ticket): Variable[]
+  workerEnvironment(): NodeJS.ProcessEnv
   /** Tools to register on the main Session (`ticket === undefined`) or on `ticket`'s worker Session. */
   tools(agent: Agent, ticket?: Ticket): Tool[]
 }
@@ -108,6 +110,7 @@ export class Sessions {
   private readonly agentDelivery: AgentDelivery
   /** Decorated agents mapped to their registered disposers and skill scope until the agent is disposed or `Sessions.dispose()` runs. */
   private readonly bindings = new Map<Agent, SessionBinding>()
+  private releaseWorkerSubprocess?: () => void
   private readonly retryHealth = new RetryHealth()
   private readonly externalTools = new ExternalTools()
   private readonly external = new Map<string, { bridge: HarnessBridge; assignment: string }>()
@@ -122,6 +125,10 @@ export class Sessions {
   }
   /** Subscribes to host agent and session events so newly created sessions are decorated and model-budget retries are reflected in health. Call once at startup. */
   install(): void {
+    this.releaseWorkerSubprocess = scopeWorkerSubprocess(this.ctx.subprocess, sessionId => {
+      const agent = this.ctx.agents.get(sessionId as SessionId)
+      if (agent && this.bindings.has(agent)) return this.host.workerEnvironment()
+    })
     const guardEnded = (scope: Context) => scope.on('agent/pre-step', (payload, next) => {
       if (this.bindings.get(payload.agent)?.master && payload.agent.id !== this.host.masterId) throw new UserError('masterChanged')
       const ticket = this.ticketOf(payload.agent)
@@ -212,7 +219,7 @@ export class Sessions {
             + '\n\n确认、提问和报告使用 dsh-superagent MCP 服务器上的 orchestrator_* 工具。'
             + '以下操作技能已加载，不要再用单独的技能工具加载。\n'
             + this.host.prompts.skills(version.config).map(([name, text]) => `\n## ${SKILL_PREFIX}${name}\n${text}`).join('\n'),
-          environment: { ...process.env }, mcpServers: [mcp] }
+          environment: { ...process.env, ...this.host.workerEnvironment() }, mcpServers: [mcp] }
         } })
         this.external.set(id, { bridge, assignment })
         if (ticket!.execution?.primaryRepository && !ticket!.execution.projectsLinked) {
@@ -457,5 +464,9 @@ export class Sessions {
     }
   }
   /** Releases prompt sections, skills, and tools registered by `Sessions` across all decorated agents. */
-  dispose(): void { for (const agent of [...this.bindings.keys()]) this.release(agent) }
+  dispose(): void {
+    this.releaseWorkerSubprocess?.()
+    this.releaseWorkerSubprocess = undefined
+    for (const agent of [...this.bindings.keys()]) this.release(agent)
+  }
 }

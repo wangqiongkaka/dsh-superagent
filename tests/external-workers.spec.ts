@@ -3,6 +3,7 @@ import { feishu, startRuntime, type Host } from './fixtures/host.ts'
 import type { WorkerMcpServer } from '../src/app/external-tools.ts'
 import { deferred, waitUntil } from './fixtures/async.ts'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { workerGitConfig } from '../src/infra/environment.ts'
 
 let h: Host | undefined
 afterEach(async () => { await h?.stop(); h = undefined })
@@ -93,6 +94,7 @@ it.each(['codex', 'claude-code'] as const)('runs new %s tickets with scoped tool
   expect(context.instructions).toContain('dsh-superagent-feishu')
   const cli = h.runtime.deployment.feishu!.cli
   expect(context.environment.DSH_SUPERAGENT_FEISHU_CLI).toBe(cli)
+  expect(context.environment.GIT_CONFIG_GLOBAL).toBe(workerGitConfig(h.runtime.deployment.stateDir))
   expect(context.instructions).toContain(`DSH_SUPERAGENT_FEISHU_CLI = ${JSON.stringify(cli)}`)
   expect(context.instructions).toContain('"$DSH_SUPERAGENT_FEISHU_CLI"')
   const current = h.runtime.store.settings()

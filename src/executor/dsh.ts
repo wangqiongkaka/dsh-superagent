@@ -85,6 +85,7 @@ export interface ExecutorHost {
   paused(): boolean
   /** Execution environment variables for `ticket`, passed to its workspace prepare command. */
   environment(ticket: Ticket): Variable[]
+  workerEnvironment(): NodeJS.ProcessEnv
   sourceLink(trigger: Trigger, signal?: AbortSignal): Promise<{ source_url?: string; source_url_read?: string }>
   /** Stored Trigger of the message `trigger` replies to, when it replies to one. */
   repliedTo(trigger: Trigger): Trigger | undefined
@@ -299,7 +300,7 @@ export class DshExecutor implements Executor {
     const directory = ticket.execution?.directory ?? ''
     await mkdir(dirname(directory), { recursive: true })
     const command = this.host.store.settings().executor.prepare.trim()
-    const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
+    const env = { ...this.host.workerEnvironment(), ...Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value])) }
     // Enforce a timeout so a hung prepare command (such as on a credential prompt) fails the ticket instead of holding a worker slot indefinitely.
     const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
     if (ticket.execution?.repositories) {
@@ -312,7 +313,7 @@ export class DshExecutor implements Executor {
           const owner = this.worktreeOwner(repository.worktree.directory)
           await prepareWorktree(repository, ticket.execution.name, branch,
             (argv, cwd) => runAsWorker(this.host.context.subprocess, argv, cwd, signal, env),
-            cwd => verifyDirectory(cwd, this.host.context.subprocess, signal), !ticket.execution.prepared,
+            cwd => verifyDirectory(cwd, this.host.context.subprocess, signal, env), !ticket.execution.prepared,
             owner?.id !== ticket.id ? owner?.execution?.name : undefined)
             .catch((error: unknown) => { throw new PrepareFailed(String(error)) })
           this.host.store.set(KV.executor.worktree(repository.worktree.directory), ticket.id)
@@ -325,7 +326,7 @@ export class DshExecutor implements Executor {
         }
         const remote = (await runAsWorker(this.host.context.subprocess, ['git', 'remote', 'get-url', 'origin'], target, signal, env)).trim()
         if (remote.replace(/\.git$/, '') !== repository.url) throw new PrepareFailed(`Repository ${repository.id} has an unexpected origin; inspect its directory before retrying`)
-        await verifyDirectory(target, this.host.context.subprocess, signal)
+        await verifyDirectory(target, this.host.context.subprocess, signal, env)
       }
     }
     if (command && !ticket.execution?.prepared) await runAsWorker(this.host.context.subprocess, ['sh', '-c', command], dirname(directory), signal, env)
@@ -335,7 +336,7 @@ export class DshExecutor implements Executor {
         throw new PrepareFailed(`The prepare command failed: ${error instanceof Error ? error.message : String(error)}`)
       })
     await mkdir(directory, { recursive: true })
-    await verifyDirectory(directory, this.host.context.subprocess, this.host.lifetime)
+    await verifyDirectory(directory, this.host.context.subprocess, this.host.lifetime, env)
   }
   /** Enqueues a `launch` effect for an accepted or resumed assignment; launches start in queue order as worker slots free up. */
   start(ticket: Ticket, assignment: Assignment): void {
@@ -508,7 +509,7 @@ export class DshExecutor implements Executor {
     const task = (async () => {
       await this.stopped(id)
       await assertIdle()
-      const env = Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value]))
+      const env = { ...this.host.workerEnvironment(), ...Object.fromEntries(this.host.environment(ticket).map(variable => [variable.key, variable.value])) }
       const signal = AbortSignal.any([this.host.lifetime, AbortSignal.timeout(PREPARE_TIMEOUT_MS)])
       const results: { repository: string; removed: boolean; reason?: string; ignored?: { paths: string[]; token: string } }[] = []
       for (const repo of execution.repositories ?? []) {

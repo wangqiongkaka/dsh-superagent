@@ -118,18 +118,19 @@ export class Runtime extends Service implements SourceHost {
       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
+      const workerEnvironment = () => setup.workerEnvironment()
       const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, get masterId() { return runtime.masterId }, context: ctx,
         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
       const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), get masterId() { return runtime.masterId },
         lifetime: this.lifetime,
-        closing: () => this.closing(), rebuilding: () => !!this.rebuilding, environment,
+        closing: () => this.closing(), rebuilding: () => !!this.rebuilding, environment, workerEnvironment,
         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
       const policyChanged: EngineForSettings['policyChanged'] = (from, to, effects) => { this.engine.policyChanged(from, to, effects) }
       this.settings = new Settings({ store, sources, engine: { policyChanged }, health: board, context: ctx, lifetime: this.lifetime, sessions,
         sourceHost: this, setup, requestPass: () => { this.passes.request() } })
       this.executor = new DshExecutor({ context: ctx, get engine() { return runtime.engine }, store, effects, health: board.claim('worker'), machine,
-        lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, sourceLink: link,
+        lifetime: this.lifetime, sessions, closing: () => this.closing(), paused: () => this.paused(), environment, workerEnvironment, sourceLink: link,
         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
         settings: () => store.settings(), paused: () => this.paused() || !!this.rebuilding, threadContext: trigger => sources.threadContext(trigger),
@@ -302,7 +303,6 @@ export class Runtime extends Service implements SourceHost {
       await this.ctx.sessionPersistence.flush()
     } finally {
       // Close the database before releasing the directory lock so another process cannot open the database mid-write; a compromised lock may already be released.
-      this.setup.restore()
       try { this.store.close() } finally {
         const unreleased = (error: unknown) => { this.ctx.logger.warn('dsh-superagent could not release its state directory lock: %s',
           String(error)) }

@@ -123,17 +123,25 @@ export async function writeEnvironment(deployment: Pick<Deployment, 'stateDir' |
   ].join('\n') + '\n')
 }
 
-/** Applies environment overrides and prepends worker shims to `process.env.PATH`, returning a restore callback. */
-export function applyEnvironment(variables: Record<string, string | undefined>, stateDir: string, path: string): () => void {
-  const values = { ...variables, PATH: [workerBin(stateDir), path].join(delimiter) }
-  const previous = Object.fromEntries(Object.keys(values).map(name => [name, process.env[name]]))
-  const apply = (env: Record<string, string | undefined>): void => { for (const [name, value] of Object.entries(env)) { if (value === undefined) delete process.env[name]; else process.env[name] = value } }
-  apply(values)
-  return () => { apply(previous) }
+/** Applies overrides to native shell children using the session id supplied by DSH's shell tools. */
+export function scopeWorkerSubprocess(subprocess: SubprocessRuntime, environment: (sessionId: string) => NodeJS.ProcessEnv | undefined): () => void {
+  const original = Object.getOwnPropertyDescriptor(subprocess, 'spawn')
+  const spawn = subprocess.spawn
+  const scoped: SubprocessRuntime['spawn'] = function (this: SubprocessRuntime, spec) {
+    const sessionId = spec.env?.DSH_SESSION_ID
+    const env = sessionId ? environment(sessionId) : undefined
+    return spawn.call(this, env ? { ...spec, env: { ...spec.env, ...env } } : spec)
+  }
+  Object.defineProperty(subprocess, 'spawn', { configurable: true, writable: true, value: scoped })
+  return () => {
+    if (Object.getOwnPropertyDescriptor(subprocess, 'spawn')?.value !== scoped) return
+    if (original) Object.defineProperty(subprocess, 'spawn', original)
+    else Reflect.deleteProperty(subprocess, 'spawn')
+  }
 }
 
 /** Spawns a command through the DSH subprocess runtime, which strips credential-shaped environment variables. */
-export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[], cwd: string, signal: AbortSignal, env?: Record<string, string>): Promise<string> {
+export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[], cwd: string, signal: AbortSignal, env?: NodeJS.ProcessEnv): Promise<string> {
   const handle = subprocess.spawn({ argv, cwd, graceMs: 2000, signal, ...env ? { env } : {}, stdio: { stdin: 'ignore', stdout: { maxBytes: 1 << 20 }, stderr: { maxBytes: 1 << 16 } } })
   const { exitCode } = await handle.done
   const read = (reader: SubprocessOutputReader | undefined): string => reader?.readFrom(0).text ?? ''
@@ -143,15 +151,15 @@ export async function runAsWorker(subprocess: SubprocessRuntime, argv: string[],
 }
 
 /** Verifies that worker git invocations resolve the deployment's GitHub credential helper. */
-export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
+export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 'stateDir'>, subprocess: SubprocessRuntime, signal: AbortSignal, env: NodeJS.ProcessEnv): Promise<void> {
   const { github, stateDir } = deployment
   if (!github.cli) {
-    const isolated = (await runAsWorker(subprocess, ['git', 'config', '--get', 'user.useConfigOnly'], stateDir, signal)).trim()
+    const isolated = (await runAsWorker(subprocess, ['git', 'config', '--get', 'user.useConfigOnly'], stateDir, signal, env)).trim()
     if (isolated !== 'true') throw new SetupError('gitTooOld')
     return
   }
   // `-z` separates fields with NUL and never quotes paths.
-  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)])).catch(() => '')).split('\0')
+  const helpers = (await runAsWorker(subprocess, ['git', 'config', '-z', '--show-origin', '--get-all', 'credential.https://github.com.helper'], stateDir, AbortSignal.any([signal, AbortSignal.timeout(60_000)]), env).catch(() => '')).split('\0')
   if (helpers.join('\0') !== [`file:${workerGitConfig(stateDir)}`, credentialHelper(github.cli), ''].join('\0')) throw new SetupError('gitTooOld')
 }
 
@@ -159,10 +167,10 @@ export async function verifyEnvironment(deployment: Pick<Deployment, 'github' | 
  * Verifies that a ticket directory's local or worktree git config defines no custom `credential.*` or `http.*extraheader`
  * keys, which the agent's git would read from the repository's own config and act on.
  */
-export async function verifyDirectory(directory: string, subprocess: SubprocessRuntime, signal: AbortSignal): Promise<void> {
+export async function verifyDirectory(directory: string, subprocess: SubprocessRuntime, signal: AbortSignal, env?: NodeJS.ProcessEnv): Promise<void> {
   const keys = ['git', 'config', '-z', '--show-scope', '--get-regexp', '^(credential\\..*|http\\..*extraheader)$']
   // `git config --get-regexp` exits with code 1 when no keys match.
-  const output = await runAsWorker(subprocess, keys, directory, AbortSignal.any([signal, AbortSignal.timeout(60_000)]))
+  const output = await runAsWorker(subprocess, keys, directory, AbortSignal.any([signal, AbortSignal.timeout(60_000)]), env)
     .catch((error: unknown) => { if (error instanceof CliError && error.exitCode === 1) return ''; throw error })
   const scoped = output.split('\0')
   const local = scoped.flatMap((scope, index) => index % 2 === 0 && (scope === 'local' || scope === 'worktree') ? [scoped[index + 1]!.split('\n')[0]!] : [])
