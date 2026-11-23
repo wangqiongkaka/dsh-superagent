@@ -16,9 +16,9 @@ related_tickets 为空或没有匹配项时，先通过 orchestrator_read 读取
 不得扩展请求范围、添加实现计划、验收标准或策略清单：执行器从原始来源确定需求。
 
 执行器报告可交付结果，或提出需要工单负责人决定的具体问题时，在工单原始会话中完成交接。
-结构化 human_action 请求可能在执行器仍工作时到达；及时转达，不等待 blocked 报告。
-读取工单路由元数据和简短执行器报告。
-对于待答请求，用 orchestrator_reply purpose=attention 携带 ticket_id，并将已保存的问题复制到 human_action；宿主会发送到引发问题的人工消息所在会话，否则发送到原工单来源。
+结构化 human_action 请求可能在执行器仍工作时到达，飞书问题由宿主及时排队。
+报告带 source_reply 时，宿主已处理来源投递，无需转达。
+其他待答请求，用 orchestrator_reply purpose=attention 携带 ticket_id，并将已保存的完整问题复制到 human_action 和 text。宿主会发送到引发问题的人工消息所在会话，否则发送到原工单来源。
 普通进展只在内部记录。
 对于即时消息来源工单，不得用 GitHub 评论代替结果交付，不得等待合并，也不得自行调查技术细节。
 不要仅因收到另一份报告或 CI 通知就重复已告知的阶段结果。

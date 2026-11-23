@@ -11,6 +11,8 @@ import { automatic, type Tickets } from './tickets.ts'
 export interface WorkerReport {
   state: ReportState
   summary: string
+  /** Final text for the source conversation, supplied for a ready result or an answer. */
+  publicReply?: string
   /** A short, shareable explanation of a failure, separate from internal diagnostics. */
   failureReason?: string | { zh: string; en: string }
   /** Open question for a person: a string asks it, `null` clears an open one, and `undefined` keeps the current one. */
@@ -123,10 +125,16 @@ export class Assignments extends EnginePart {
     if (previous && previous.id !== attention?.id) this.replies.withdrawAttention(previous.id)
     assignment.report = { state: report.state, summary: report.summary, at }
     ticket.updatedAt = at
-    if (report.answers && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]
+    const queued = report.publicReply && (report.answers || report.state === 'ready')
+      && this.replies.reportDelivery(ticket, report.publicReply, report.answers)
+    if (report.answers) {
+      if (queued && ticket.answers) ticket.answers = ticket.answers.filter(id => id !== report.answers)
+      if (!queued && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]
+    }
     if (report.answers) this.takeUp(ticketId, report.answers)
     if (report.state === 'blocked' || report.state === 'failed') ticket.undelivered = ticket.undelivered.filter(id => !automatic(ticket.inputs.find(input => input.id === id)))
     this.repo.tickets.save(ticket)
+    if (report.question && attention && report.state !== 'dropped') this.replies.reportAttention(ticket, attention)
     if (report.state === 'failed') this.replies.reportFailure(ticket, assignment.id, report.failureReason)
     // A ticket that follows Threads ends with them: a ready report ends it only once followsDone holds, with that outcome.
     const ready = !ticket.follows?.length ? 'completed' : this.tickets.followsDone(ticket)?.outcome

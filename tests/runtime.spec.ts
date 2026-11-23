@@ -363,7 +363,7 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(relays(runtime.masterId)).toEqual([])
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'need a decision', human_action: 'Desktop too?' })
   expect(runtime.store.tickets.get(ticket.id)!.attention).toMatchObject({ question: 'Desktop too?' })
-  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_attention', ticket: { ticket_id: ticket.id, attention: { question: 'Desktop too?' } } })
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_attention', source_reply: 'pending', ticket: { ticket_id: ticket.id, attention: { question: 'Desktop too?' } } })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: 'other', text: 'x' })).rejects.toThrow('current attention question')
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: 'Desktop too?', text: '要不要也改桌面端？' })).toEqual({ status: 'sent' })
   await runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'pr open', pr_number: 42, human_action: null })
@@ -387,6 +387,51 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(agents.get(sessionId)!.cancel).not.toHaveBeenCalled()
   const notice = runtime.store.receipts.waiting().find(item => item.kind === 'notice')
   expect(notice ?? runtime.store.replyStatus(key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged'))).toBeTruthy()
+})
+
+it('posts the complete decision request and ready conclusion to Feishu without a second model reply', async () => {
+  const { sessionId, ticket } = await acceptedTicket()
+  const sent = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  const question = '截图已核对。占位符 {{host_ip}} 只有参数名，无法判断是否为数组。\n\nA. 从模板生成参数映射，再手动确认类型。\nB. 粘贴带真实值的 JSON 示例，由系统识别类型。\n\n推荐 A，它沿用现有入口。请确认选 A 还是 B。'
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', human_action: question, summary: 'internal diagnostic' })
+  expect(sent()).toHaveLength(2)
+  expect(sent().at(-1)).toEqual(expect.arrayContaining(['--message-id', 'om_1', '--markdown', question, '--reply-in-thread']))
+  await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'attention', human_action: question, text: '请选择哪种方式。' })
+  expect(sent()).toHaveLength(2)
+
+  const result = '结论：使用模板占位符生成参数映射。\n\n类型仍需手动确认，因为占位符不包含示例值。已用字符串和数组用例验证。'
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'private build log', public_reply: result })
+  expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', source_reply: 'pending' })
+  expect(sent()).toHaveLength(3)
+  expect(sent().at(-1)).toEqual(expect.arrayContaining(['--message-id', 'om_1', '--markdown', result, '--reply-in-thread']))
+  await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '完成。' })
+  expect(sent()).toHaveLength(3)
+})
+
+it('delivers an explicit Feishu answer to its own message and rejects overlong public text atomically', async () => {
+  const { sessionId, ticket } = await acceptedTicket()
+  const asked = feishu('12', '为什么不能推断数组？', { root_id: 'om_1', mentions: [] })
+  await receive(asked)
+  const base = { state: 'progress', summary: 'internal report', reply_to_trigger_id: asked.id }
+  await expect(runTool(sessionId, 'orchestrator_report', { ...base, public_reply: 'word '.repeat(101) })).rejects.toThrow('maximum is 100')
+  expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toBeUndefined()
+  const text = '占位符只提供字段名。数组类型需要显式指定，或从含数组值的 JSON 示例识别。'
+  await runTool(sessionId, 'orchestrator_report', { ...base, public_reply: text })
+  const replies = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply' && args.includes('om_12'))
+  expect(replies()).toHaveLength(1)
+  expect(replies()[0]).toEqual(expect.arrayContaining(['--markdown', text]))
+  await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'answer', trigger_id: asked.id, text: '不能推断。' })
+  expect(replies()).toHaveLength(1)
+})
+
+it('withdraws a queued Feishu question when its ticket is stopped before delivery', async () => {
+  const { ticket } = await acceptedTicket()
+  runtime.store.saveSettings({ ...runtime.store.settings(), paused: true })
+  const reported = runtime.engine.report(ticket.id, { state: 'blocked', summary: 'Waiting', question: '选 A 还是 B？' })
+  const replyId = key('attention-reply', reported.attention!.id)
+  expect(runtime.store.replyStatus(replyId)).toBe('pending')
+  runtime.engine.stopTicket(ticket.id)
+  expect(runtime.store.replyStatus(replyId)).toBeUndefined()
 })
 
 it('lists each ticket with the Threads it subscribes to, as their Sources describe them', async () => {

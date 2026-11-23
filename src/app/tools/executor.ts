@@ -1,6 +1,7 @@
 /** Executor Session tools for reading ticket context, acknowledging requests, managing threads, handing back out-of-scope triggers, and reporting status. */
 import { z } from 'zod'
-import { liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
+import { key, liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
+import { reportReplyId } from '../../core/replies.ts'
 import { IM_WORDS } from '../../infra/text.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
 import { claimForgePull } from '../../sources/git.ts'
@@ -79,8 +80,11 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
       schema: z.object({
         state: z.enum(['progress', 'ready', 'blocked', 'failed', 'dropped']),
         summary: z.string().min(1),
+        public_reply: z.string().max(6000).refine(text => !!text.trim()).optional()
+          .describe('Final Markdown for a Feishu ready result or explicit answer (reply_to_trigger_id), sent unchanged. Include the necessary conclusion, reasoning and next step. No private diagnostics. At most 100 words.'),
         failure_reason: z.string().trim().min(1).max(240).optional().describe('For failed only: one short reason safe to post to the original request. Exclude credentials, paths, private data and raw logs.'),
-        human_action: z.string().trim().min(1).max(1000).nullish().describe('One concrete question for a person, also with state=progress; omit to keep the pending one, null to clear it.'),
+        human_action: z.string().max(1000).refine(text => !!text.trim()).nullish()
+          .describe('Full question as the recipient should see it, including context, options and recommendation when relevant. Sent unchanged to Feishu, at most 100 words. Omit to keep the pending question, null to clear it.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${host.github.deployment.github.login} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
         pull_requests: z.array(z.object({ repository_id: z.string(), number: z.number().int().positive() }).strict()).max(50).optional()
@@ -104,11 +108,14 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const refused = pull && claimPull(host.github, ticketId, pull)
           if (refused) throw new Error(refused)
           const report = { state: args.state, summary: args.summary, ...(args.failure_reason && args.state === 'failed' ? { failureReason: args.failure_reason } : {}),
+            ...(args.public_reply ? { publicReply: args.public_reply } : {}),
             ...(args.human_action !== undefined ? { question: args.human_action } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
           const updated = host.engine.report(ticketId, report)
-          const relay = reportRelay(updated, report)
+          const sourceReply = report.question && updated.attention ? host.store.replyStatus(key('attention-reply', updated.attention.id))
+            : report.answers || report.state === 'ready' ? host.store.replyStatus(reportReplyId(updated, report.answers)) : undefined
+          const relay = reportRelay(updated, report, sourceReply)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'
           return { reported: true, notification, ...(updated.attention ? { attention: updated.attention } : {}) }
