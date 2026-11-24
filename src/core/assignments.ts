@@ -2,7 +2,7 @@
 import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, liveTicket, runningAssignment } from './model.ts'
-import type { ReportState, Ticket } from './model.ts'
+import type { Attention, AttentionOption, ReportState, Ticket } from './model.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
 import { automatic, type Tickets } from './tickets.ts'
@@ -17,6 +17,8 @@ export interface WorkerReport {
   failureReason?: string | { zh: string; en: string }
   /** Open question for a person: a string asks it, `null` clears an open one, and `undefined` keeps the current one. */
   question?: string | null
+  /** Choices for a `question` that a Channel may offer as buttons; the question text stays complete without them. */
+  options?: AttentionOption[]
   /** The person's message whose request raised the question; routes the question to the channel where it was written. */
   askedBy?: string
   /** The person's question this report answers, which the worker thereby takes up; authorizes the main Session to send an answer reply. */
@@ -116,8 +118,13 @@ export class Assignments extends EnginePart {
     if (assignment.state === 'ended') throw new UserError('assignmentEnded')
     const at = this.now()
     const previous = ticket.attention
-    const ask = (question: string) => ({ id: key('attention', ticketId, question, at), question, ...(report.askedBy ? { triggerId: report.askedBy } : {}) })
-    const asked = report.question && report.question !== previous?.question ? ask(report.question) : previous
+    const options = report.options?.length ? report.options : undefined
+    const ask = (question: string): Attention => ({ id: key('attention', ticketId, question, at, ...options ? [JSON.stringify(options)] : []), question,
+      ...(report.askedBy ? { triggerId: report.askedBy } : {}), ...(options ? { options } : {}) })
+    // The same question with other choices is a new question, so its message goes out again with them; repeated without
+    // choices, it keeps the ones it was asked with.
+    const same = report.question === previous?.question && (!options || JSON.stringify(options) === JSON.stringify(previous?.options))
+    const asked = report.question && !same ? ask(report.question) : previous
     const attention = report.question === null || report.state === 'ready' ? undefined : asked
     if (attention) ticket.attention = attention
     else delete ticket.attention

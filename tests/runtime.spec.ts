@@ -28,6 +28,7 @@ import { githubKind, pollRound } from '../src/sources/github.ts'
 import { CliError, Commands } from '../src/infra/commands.ts'
 import { UserError, key, runningAssignment, said, threadKey, waitsForPerson, type Trigger } from '../src/core/index.ts'
 import { feishuTrigger } from '../src/sources/feishu.ts'
+import { answerFromCard, cardAnswerId } from '../src/sources/feishu-card.ts'
 import { feishuChannel } from '../src/sources/feishu-trigger.ts'
 import { commentTrigger, githubChannel } from '../src/sources/github-trigger.ts'
 import { IM_WORDS } from '../src/infra/text.ts'
@@ -406,6 +407,30 @@ it('posts the complete decision request and ready conclusion to Feishu without a
   expect(sent().at(-1)).toEqual(expect.arrayContaining(['--message-id', 'om_1', '--markdown', result, '--reply-in-thread']))
   await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '完成。' })
   expect(sent()).toHaveLength(3)
+})
+
+it('asks a question with options as a Feishu card with cards on, and hands the asked person\'s click to the worker alone', async () => {
+  const { sessionId, ticket } = await acceptedTicket()
+  const settings = runtime.store.settings(), feishuSource = settings.sources.feishu!
+  runtime.store.saveSettings({ ...settings, sources: { ...settings.sources, feishu: { ...feishuSource, config: { ...feishuSource.config, cards: true } } } })
+  const lark = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args)
+  const question = '按钮用哪种颜色？A 红色更醒目；B 蓝色与导航一致。推荐 A。'
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'ask', human_action: question,
+    human_options: [{ label: '红色', recommended: true }, { label: '蓝色' }] })
+  await runtime.idle()
+  const attention = runtime.store.tickets.get(ticket.id)!.attention!
+  expect(runtime.store.receipts.get(key('attention-reply', attention.id))).toMatchObject({ text: question, choices: { attentionId: attention.id } })
+  expect(lark().filter(args => args[1] === '+messages-reply').at(-1)).toEqual(expect.arrayContaining(['--msg-type', 'interactive', '--reply-in-thread']))
+  const before = relays(runtime.masterId).length
+  await answerFromCard(runtime.context(feishuKind), { event_id: 'e1', operator_id: MEMBER, message_id: 'om_card', chat_id: CHAT,
+    action_value: JSON.stringify({ ticket: ticket.id, attention: attention.id, choice: 1 }) })
+  await runtime.idle()
+  const answerId = cardAnswerId(attention.id)
+  expect(runtime.store.tickets.get(ticket.id)!.inputs.filter(input => input.kind === 'trigger' && input.triggerId === answerId)).toHaveLength(1)
+  expect(deliveries.mock.calls.some(([call]) => call.sessionId === sessionId && call.text.includes('选择: 蓝色'))).toBe(true)
+  // The answer went to its ticket without an Eval, so the main Session is not asked to route it.
+  expect(relays(runtime.masterId).slice(before).some(item => item.trigger_id === answerId)).toBe(false)
+  expect(lark().some(args => args.slice(0, 3).join(' ') === 'api PATCH /open-apis/im/v1/messages/om_card')).toBe(true)
 })
 
 it('delivers an explicit Feishu answer to its own message and rejects overlong public text atomically', async () => {

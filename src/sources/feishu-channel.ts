@@ -5,6 +5,8 @@ import { checkedImText } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
 import type { ChannelLink, ChannelLinks } from './kind.ts'
 import { feishuTriggerId } from './feishu-trigger.ts'
+import { questionCard } from './feishu-card.ts'
+import type { FeishuConfig } from './feishu.ts'
 
 /** Feishu or Lark AppLink that opens a chat; used when the message's own link was not delivered with the event. */
 export const feishuChatLink = (brand: 'feishu' | 'lark', chatId: string): string =>
@@ -15,19 +17,34 @@ export const feishuChatLink = (brand: 'feishu' | 'lark', chatId: string): string
  */
 const gone = (error: unknown): boolean => error instanceof CliError && error.code !== undefined && (error.code === 230011
   || /withdrawn/i.test(error.message) || (Math.floor(error.code / 100) === 2300 && /not found/i.test(error.message)))
-/** Prefers threaded replies, falling back to a plain quoted reply on Feishu error 2200 with the same idempotency key. */
-export async function sendFeishu(host: Pick<SourceContext, 'commands'>, message: OutboundMessage): Promise<'sent' | 'gone'> {
+/**
+ * Prefers threaded replies, falling back to a plain quoted reply on Feishu error 2200 with the same idempotency key. With
+ * question cards on, a question with options goes out as a card; when Feishu rejects the card, its complete text goes instead.
+ */
+export async function sendFeishu(host: Pick<SourceContext, 'commands'>, message: OutboundMessage, config?: Pick<FeishuConfig, 'cards'>): Promise<'sent' | 'gone'> {
   const messageId = message.channel.address.messageId
   if (!messageId) throw new Error('Missing Feishu reply target')
   const text = checkedImText(message.text)
-  const reply = ['im', '+messages-reply', '--message-id', messageId, '--idempotency-key', message.id]
-  try {
-    try { await host.commands.lark([...reply, '--markdown', text, '--reply-in-thread']) }
+  const reply = async (threaded: string[], plain: string[]) => {
+    const base = ['im', '+messages-reply', '--message-id', messageId, '--idempotency-key', message.id]
+    try { await host.commands.lark([...base, ...threaded, '--reply-in-thread']) }
     catch (error) {
       // Some live messages reject thread creation with 2200 while a plain quoted reply succeeds.
       if (!(error instanceof CliError) || error.code !== 2200) throw error
-      await host.commands.lark([...reply, '--text', text])
+      await host.commands.lark([...base, ...plain])
     }
+  }
+  try {
+    const { choices, ticketId } = message
+    if (config?.cards && choices && ticketId) {
+      const card = ['--msg-type', 'interactive', '--content', questionCard({ ...message, choices, ticketId })]
+      try { await reply(card, card); return 'sent' }
+      catch (error) {
+        // Feishu answered and refused the card itself; a timeout, a rate limit or a gone target is not about the card.
+        if (!(error instanceof CliError) || error.code === undefined || error.code === 99991400 || gone(error)) throw error
+      }
+    }
+    await reply(['--markdown', text], ['--text', text])
   }
   catch (error) {
     if (gone(error)) return 'gone'

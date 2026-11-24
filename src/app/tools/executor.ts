@@ -85,6 +85,9 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         failure_reason: z.string().trim().min(1).max(240).optional().describe('For failed only: one short reason safe to post to the original request. Exclude credentials, paths, private data and raw logs.'),
         human_action: z.string().max(1000).refine(text => !!text.trim()).nullish()
           .describe('Full question as the recipient should see it, including context, options and recommendation when relevant. Sent unchanged to Feishu, at most 100 words. Omit to keep the pending question, null to clear it.'),
+        human_options: z.array(z.object({ label: z.string().trim().min(1).max(40), recommended: z.boolean().optional() }).strict())
+          .min(2).max(4).optional()
+          .describe('With human_action, for a single-choice question: 2-4 short option labels. Feishu may show them as buttons plus a free-text answer; human_action must still describe every option.'),
         question_for_trigger_id: z.string().optional().describe('With human_action: the human message that raised the question, which is asked where that person wrote.'),
         pr_number: z.number().int().positive().nullish().describe(`The ticket's PR: its source PR, or one by ${host.github.deployment.github.login} from a branch named after this ticket (DSH_SUPERAGENT_NAME).`),
         pull_requests: z.array(z.object({ repository_id: z.string(), number: z.number().int().positive() }).strict()).max(50).optional()
@@ -110,6 +113,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
           const report = { state: args.state, summary: args.summary, ...(args.failure_reason && args.state === 'failed' ? { failureReason: args.failure_reason } : {}),
             ...(args.public_reply ? { publicReply: args.public_reply } : {}),
             ...(args.human_action !== undefined ? { question: args.human_action } : {}),
+            ...(args.human_action && args.human_options ? { options: args.human_options.map(({ label, recommended }) => ({ label, ...recommended ? { recommended } : {} })) } : {}),
             ...(args.question_for_trigger_id ? { askedBy: args.question_for_trigger_id } : {}),
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
           const updated = host.engine.report(ticketId, report)

@@ -121,6 +121,28 @@ export class Engine {
     })
   }
   /**
+   * Answer a ticket's open question with a person's message from the Channel that asked it, such as a choice on a card: the
+   * message is stored and goes to that ticket alone, as an Input that wakes its worker, without an Eval. Only the person the
+   * question is for may answer it, the one whose message raised it or else who started the ticket, and only once.
+   * @returns `answered`, `duplicate` for an answer recorded already (a repeated click or event), `stale` once the question
+   * was replaced, cleared, or its ticket ended, or `refused` for another person.
+   */
+  answer(ticketId: string, attentionId: string, trigger: Trigger): 'answered' | 'duplicate' | 'stale' | 'refused' {
+    return this.repo.atomic(() => {
+      if (this.repo.triggers.get(trigger.id)) return 'duplicate'
+      const ticket = this.repo.tickets.get(ticketId)
+      const attention = ticket?.attention
+      if (!ticket || !liveTicket(ticket) || attention?.id !== attentionId) return 'stale'
+      const asker = this.repo.triggers.get(attention.triggerId ?? ticket.origin.triggerId)
+      if (!trigger.human || !asker?.human || asker.actor.source !== trigger.actor.source || asker.actor.id !== trigger.actor.id) return 'refused'
+      // A conversation the Source no longer receives takes no answer, and keeps no record that would read as answered.
+      if (!this.options.scope.scope(trigger).listened) return 'refused'
+      this.intake.receive(trigger)
+      this.attach(ticketId, trigger.id, 'The person answered your open question with this message.')
+      return 'answered'
+    })
+  }
+  /**
    * Ask a running worker that waits in `waiting` state for its status; any other worker is left alone.
    * @returns whether the worker was asked.
    * @throws UserError when the ticket is unknown.
@@ -269,7 +291,7 @@ export class Engine {
 }
 
 /** What Sources ask and tell the Engine. */
-export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed'>
+export type EngineForSources = Pick<Engine, 'receive' | 'bindThread' | 'threadClosed' | 'answer'>
 /** What the main Session asks of the Engine. */
 export type EngineForMainSession = Pick<Engine, 'candidate' | 'candidateDelivered' | 'decide' | 'attach' | 'reply' | 'requestStatus' | 'note'>
 /** What people ask of the Engine, through the panel or the main Session. */

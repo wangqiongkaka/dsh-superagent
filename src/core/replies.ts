@@ -3,7 +3,7 @@ import { key } from './ids.ts'
 import { UserError } from './errors.ts'
 import { latestAssignment, liveTicket, ticketOutcome } from './model.ts'
 import type { Attention, ChannelRef, Ticket, Trigger } from './model.ts'
-import type { ReplyStatus } from './ports.ts'
+import type { OutboundMessage, ReplyStatus } from './ports.ts'
 import { EnginePart } from './part.ts'
 
 /**
@@ -23,6 +23,10 @@ export function reportReplyId(ticket: Ticket, answerTo?: string): string {
   const assignment = latestAssignment(ticket)
   return key('report-result', ticket.id, assignment?.id ?? '', assignment?.deliveredAt ?? '')
 }
+
+/** The options a Channel may offer to answer the question, when it has any. */
+const choices = (attention: Attention): Pick<OutboundMessage, 'choices'> =>
+  attention.options?.length ? { choices: { attentionId: attention.id, options: attention.options } } : {}
 
 /**
  * Replies writes the Engine's messages to Channels through the Outbox port: an acknowledgement, the answer to a person's
@@ -69,7 +73,7 @@ export class Replies extends EnginePart {
   reportAttention(ticket: Ticket, attention: Attention): void {
     const channel = this.attentionChannel(ticket, attention)
     if (channel?.source === 'feishu') this.options.outbox.send({
-      id: key('attention-reply', attention.id), channel, text: attention.question, kind: 'reply', ticketId: ticket.id,
+      id: key('attention-reply', attention.id), channel, text: attention.question, kind: 'reply', ticketId: ticket.id, ...choices(attention),
     })
   }
   /** Publish only an explicitly authored Feishu reply, never the internal report summary. */
@@ -125,7 +129,7 @@ export class Replies extends EnginePart {
       : ticket && (attention ? this.attentionChannel(ticket, attention) : this.sourceChannel(ticket))
     if (!channel) throw new UserError('noChannel')
     const text = attention && channel.source === 'feishu' ? attention.question : request.text
-    this.options.outbox.send({ id, channel, text, kind: 'reply', ...ticket ? { ticketId: ticket.id } : {} })
+    this.options.outbox.send({ id, channel, text, kind: 'reply', ...ticket ? { ticketId: ticket.id } : {}, ...attention ? choices(attention) : {} })
     if (request.purpose === 'answer' && ticket && trigger && ticket.answers?.includes(trigger.id)) {
       ticket.answers = ticket.answers.filter(item => item !== trigger.id)
       this.repo.tickets.save(ticket)

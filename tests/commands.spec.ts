@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { CliError, Commands, commandError } from '../src/infra/commands.ts'
 import { feishuKind } from '../src/sources/feishu.ts'
 import { feishuChannel } from '../src/sources/feishu-trigger.ts'
+import { sendFeishu } from '../src/sources/feishu-channel.ts'
 import { githubKind } from '../src/sources/github.ts'
 import { githubChannel } from '../src/sources/github-trigger.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
@@ -93,6 +94,37 @@ describe('Channels', () => {
       [...base, '--markdown', feishu.text, '--reply-in-thread', '--as', 'bot', '--format', 'json'],
       [...base, '--text', feishu.text, '--as', 'bot', '--format', 'json'],
     ])
+  })
+  describe('question cards', () => {
+    const question = { ...feishu, text: '用哪种颜色？红色更醒目。', ticketId: 'T1',
+      choices: { attentionId: 'A1', options: [{ label: '红色', recommended: true }, { label: '蓝色' }] } }
+    const base = ['im', '+messages-reply', '--message-id', 'om_1', '--idempotency-key', feishu.id]
+    const sent = (run: { mock: { calls: unknown[][] } }) => run.mock.calls.map(call => call[1] as string[])
+    it('sends a question with options as a threaded card with one button per option and a typed answer, only with cards on', async () => {
+      const value = commands(), run = vi.spyOn(value, 'run').mockResolvedValue('{"ok":true,"data":{}}')
+      expect(await sendFeishu({ commands: value }, question, { cards: true })).toBe('sent')
+      const [args] = sent(run)
+      expect(args!.slice(0, 8)).toEqual([...base, '--msg-type', 'interactive'])
+      expect(args).toContain('--reply-in-thread')
+      const card = JSON.parse(args![args!.indexOf('--content') + 1]!)
+      const buttons = card.body.elements[1].columns.map((column: { elements: { text: { content: string }; behaviors: { value: unknown }[] }[] }) => column.elements[0]!)
+      expect(buttons.map((button: { text: { content: string } }) => button.text.content)).toEqual(['红色（推荐）', '蓝色'])
+      expect(buttons[1].behaviors[0].value).toEqual({ ticket: 'T1', attention: 'A1', choice: 1 })
+      expect(card.body.elements[0].content).toBe(question.text)
+      expect(card.body.elements[2].elements[1].behaviors[0].value).toEqual({ ticket: 'T1', attention: 'A1', choice: -1 })
+      const off = commands(), plain = vi.spyOn(off, 'run').mockResolvedValue('{"ok":true,"data":{}}')
+      expect(await send(off, question)).toBe('sent')
+      expect(sent(plain)).toEqual([[...base, '--markdown', question.text, '--reply-in-thread', '--as', 'bot', '--format', 'json']])
+    })
+    it('sends the complete text when Feishu refuses the card, and keeps a timed-out card for a retry', async () => {
+      const value = commands()
+      const run = vi.spyOn(value, 'run').mockRejectedValueOnce(lark(230099, 'card content invalid')).mockResolvedValueOnce('{"ok":true,"data":{}}')
+      expect(await sendFeishu({ commands: value }, question, { cards: true })).toBe('sent')
+      expect(sent(run)[1]).toEqual([...base, '--markdown', question.text, '--reply-in-thread', '--as', 'bot', '--format', 'json'])
+      const slow = commands(), timed = vi.spyOn(slow, 'run').mockRejectedValueOnce(new CliError('timed out'))
+      await expect(sendFeishu({ commands: slow }, question, { cards: true })).rejects.toThrow('timed out')
+      expect(timed).toHaveBeenCalledTimes(1)
+    })
   })
   it('keeps a failed fallback queued, and recognizes a recalled target during fallback', async () => {
     for (const code of [2200, 99991400, 230011]) {

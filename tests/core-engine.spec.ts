@@ -844,6 +844,42 @@ describe('worker reports', () => {
     expect(cleared).not.toHaveProperty('attention')
     expect(h.withdrawn).toEqual([key('attention-reply', asked.attention!.id), key('attention-reply', replaced.attention!.id)])
   })
+  it('asks again when the same question comes with other options, and offers its options with its message', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    const options = [{ label: 'Red', recommended: true }, { label: 'Blue' }]
+    const plain = h.engine.report(ticketId, { state: 'progress', summary: 'ask', question: 'Which color?' }).attention!
+    const offered = h.engine.report(ticketId, { state: 'progress', summary: 'ask', question: 'Which color?', options }).attention!
+    expect(offered).toMatchObject({ question: 'Which color?', options })
+    expect(offered.id).not.toBe(plain.id)
+    expect(h.engine.report(ticketId, { state: 'progress', summary: 'ask', question: 'Which color?', options }).attention).toEqual(offered)
+    expect(h.engine.report(ticketId, { state: 'blocked', summary: 'still asking', question: 'Which color?' }).attention).toEqual(offered)
+    h.engine.reply({ purpose: 'attention', ticketId, question: 'Which color?', text: 'Which color?' })
+    expect(h.outbox.at(-1)).toMatchObject({ id: key('attention-reply', offered.id), choices: { attentionId: offered.id, options } })
+  })
+  it('takes a card answer from the person asked only, once, to the asking ticket alone and without an Eval', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.settle()
+    const attention = h.engine.report(ticketId, { state: 'progress', summary: 'ask', question: 'Which color?', options: [{ label: 'Red' }, { label: 'Blue' }] }).attention!
+    const requested = vi.mocked(h.assessor.request).mock.calls.length
+    const answer = (id: string, actor = member, attentionId = attention.id) =>
+      h.engine.answer(ticketId, attentionId, trigger(id, { actor, text: 'Choice: Red', meta: { card: true } }))
+    expect(answer('20', guest)).toBe('refused')
+    expect(h.repo.triggers.get('20')).toBeUndefined()
+    expect(answer('21', member, 'old-question')).toBe('stale')
+    expect(h.engine.answer(ticketId, attention.id, trigger('24', { meta: { blocked: true } }))).toBe('refused')
+    expect(h.repo.triggers.get('24')).toBeUndefined()
+    expect(answer('22')).toBe('answered')
+    expect(answer('22')).toBe('duplicate')
+    h.pump()
+    const ticket = h.repo.tickets.get(ticketId)!
+    expect(ticket.inputs.filter(input => input.kind === 'trigger' && input.triggerId === '22')).toHaveLength(1)
+    expect(h.delivered.some(([id, input]) => id === ticketId && input === key('input', ticketId, 'trigger', '22'))).toBe(true)
+    expect(vi.mocked(h.assessor.request).mock.calls.length).toBe(requested)
+    h.engine.report(ticketId, { state: 'progress', summary: 'got it', question: null })
+    expect(answer('23')).toBe('stale')
+  })
   it('ends the ticket on a final report: dropped drops it, ready completes it unless it follows a Source\'s Thread that is open', () => {
     const outcome = (state: 'ready' | 'dropped' | 'failed', follows: boolean, closed = false) => {
       const h = harness()

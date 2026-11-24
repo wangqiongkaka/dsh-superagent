@@ -277,8 +277,13 @@ export interface PolicyEffect {
 export type TicketEndBy = 'executor' | 'human'
 /** How a ticket ended: with its result, with its pull request merged or closed unmerged, with nothing to do, or stopped by a person. */
 export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'stopped'
-/** A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to. */
-export interface Attention { id: string; question: string; triggerId?: string }
+/** A choice offered with a question; `recommended` marks the one the worker suggests. */
+export interface AttentionOption { label: string; recommended?: boolean }
+/**
+ * A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to, and `options`
+ * are choices a Channel may offer as buttons, while `question` stays complete without them.
+ */
+export interface Attention { id: string; question: string; triggerId?: string; options?: AttentionOption[] }
 /** Ticket aggregate: an authorized work item with its assignments, channels, thread bindings, and inputs. */
 export interface Ticket {
   id: string
