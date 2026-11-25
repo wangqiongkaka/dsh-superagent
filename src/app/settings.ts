@@ -67,7 +67,7 @@ export interface SettingsHost {
   readonly context: Context
   readonly lifetime: AbortSignal
   /** Session manager through which the main Session is notified of saved settings. */
-  readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection'>
+  readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection' | 'harnesses'>
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
@@ -169,7 +169,12 @@ export class Settings {
     }
     rules.guard?.(current, candidate, origin)
     if (block === 'executor') {
-      for (const harness of ['codex', 'claude-code'] as const) {
+      const { harness: chosen } = candidate.executor
+      // A newly chosen Harness must be one the Provider runs workers on; one kept from before stays, so saving other fields works.
+      if (chosen !== current.executor.harness && !(await sessions.harnesses()).some(option => option.id === chosen)) {
+        throw new UserError('harnessUnavailable', { harness: chosen })
+      }
+      for (const harness of Object.keys(candidate.executor.harnessModels ?? {})) {
         const selection = candidate.executor.harnessModels?.[harness]
         if (selection && Object.keys(selection).length && (JSON.stringify(selection) !== JSON.stringify(current.executor.harnessModels?.[harness])
           || candidate.executor.harness === harness && current.executor.harness !== harness)) {

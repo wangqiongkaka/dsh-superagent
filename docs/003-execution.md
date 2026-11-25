@@ -26,9 +26,9 @@ Each Ticket gets an Executor Session named `worker-<ticket id>` and a directory 
 
 Executor Sessions run commands without approval as the operator's OS user. Their `dsh-superagent-worker` preset contains the tools needed for work and moves foreground shell commands to background jobs after 5 seconds. This lets a worker receive new messages at the next step instead of waiting for a long command to finish.
 
-### Codex and Claude Code workers
+### External Harness workers
 
-Execution settings select `dsh` (the default), `codex`, or `claude-code` for **new Tickets**. The main Session always stays on DSH. A Ticket stores its Harness at acceptance and keeps it through retries, follow-ups and restarts; older Tickets without a Harness field stay on DSH.
+Execution settings select `dsh` (the default) or an external Harness for **new Tickets**. The choices are those the Harness Provider in this Profile offers through `managedHarnesses` (installed Harnesses that accept managed sessions, such as Codex and Claude Code), so a Harness the Provider adds appears without a Superagent change; a Provider without that API offers DSH, Codex and Claude Code. Saving refuses a newly chosen Harness the Provider does not offer, while a saved one it no longer offers stays, marked unavailable in the panel. The main Session always stays on DSH. A Ticket stores its Harness at acceptance and keeps it through retries, follow-ups and restarts; older Tickets without a Harness field stay on DSH.
 
 External workers require `dsh-harness-provider` with the `manageSession` API in the **same Profile**, plus a configured and authenticated CLI. Execution settings keep a separate model, reasoning effort and fast-mode choice for Codex and Claude Code. Unset choices inherit the Harness defaults (including the last available model and reasoning choice). Explicit choices require Provider managed-session options version 1, are validated on save and first binding, and apply only to new Sessions; retries and restarts preserve the binding. Fast mode is offered only when the Provider exposes it and may increase usage. Workers use full-access permissions as native workers do and do not change the operator's remembered Harness/model. The DSH executor-model setting applies only to native workers; DSH has no separate fast-mode option here.
 

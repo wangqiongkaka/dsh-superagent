@@ -27,6 +27,27 @@ it.each(['codex', 'claude-code'] as const)('passes the %s selection to managed w
   expect(h.runtime.store.settings().executor).toEqual(saved)
 })
 
+it('runs workers on any Harness the Provider offers, and refuses to switch to one it does not', async () => {
+  h = await startRuntime()
+  expect(await h.runtime.sessions.harnesses()).toEqual([{ id: 'dsh', label: 'DSH' }])
+  const offered = [{ id: 'dsh', label: 'DSH 原生' }, { id: 'gemini', label: 'Gemini' }]
+  const bridge = { managedHarnesses: vi.fn(async () => offered), manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}) }
+  h.ctx.reflect.provide('harness' as never, bridge)
+  expect(await h.runtime.sessions.harnesses()).toEqual(offered)
+  const settings = h.runtime.store.settings()
+  await expect(h.runtime.settings.save('executor', { ...settings.executor, harness: 'codex' }, h.runtime.store.blockRevision('executor'), 'panel'))
+    .rejects.toThrow('codex')
+  await h.runtime.settings.save('executor', { ...settings.executor, harness: 'gemini' }, h.runtime.store.blockRevision('executor'), 'panel')
+  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '修复回归'))
+  expect(ticket.execution?.harness).toBe('gemini')
+  expect(bridge.manageSession).toHaveBeenCalledWith(sessionId, expect.objectContaining({ harness: 'gemini' }))
+  // A Harness kept from before still saves with other fields after the Provider stops offering it.
+  bridge.managedHarnesses.mockResolvedValue([{ id: 'dsh', label: 'DSH 原生' }])
+  const saved = h.runtime.store.settings().executor
+  await h.runtime.settings.save('executor', { ...saved, maxWorkers: 2 }, h.runtime.store.blockRevision('executor'), 'panel')
+  expect(h.runtime.store.settings().executor).toMatchObject({ harness: 'gemini', maxWorkers: 2 })
+})
+
 it('rejects explicit choices with an old Provider instead of silently ignoring them', async () => {
   h = await startRuntime()
   const bridge = { manageSession: vi.fn(async () => {}), releaseManagedSession: vi.fn(async () => {}) }

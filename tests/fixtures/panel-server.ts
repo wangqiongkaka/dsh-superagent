@@ -86,6 +86,8 @@ export const MACHINE = { stateDir: '/srv/dsh-superagent', promptMaxChars: 100000
 type Settings = ReturnType<typeof SettingsSchema.parse>
 export interface PanelServer {
   models?: ApiResponse<'GET models'>
+  /** The Harnesses the Provider offers workers; DSH, Codex and Claude Code when unset. */
+  harnesses?: ApiResponse<'GET harnesses'>
   masterId: string
   rebuildError?: string
   joined?: Record<string, string>; joining?: Record<string, string>
@@ -392,6 +394,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   'GET models': { answer: () => server.models ?? ({ default: { provider: 'host', model: 'default' }, routableProviders: [], failures: [],
     groups: [{ id: 'worker-provider', name: 'Worker provider', models: [{ id: 'worker-model', name: 'Worker model',
       reasoning: { efforts: [{ id: 'high', name: 'High' }] } }] }] }) },
+  'GET harnesses': { answer: () => server.harnesses ?? [{ id: 'dsh', label: 'DSH 原生' }, { id: 'codex', label: 'Codex' }, { id: 'claude-code', label: 'Claude Code' }] },
   'GET harness-models/:harness': { answer: ({ params }) => ({
     models: [{ id: `${params.harness}-deep`, label: 'Deep', thinkingOptionIds: ['low', 'high'] },
       { id: `${params.harness}-small`, label: 'Small', thinkingOptionIds: ['low'] }],

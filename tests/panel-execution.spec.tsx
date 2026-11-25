@@ -46,6 +46,18 @@ it('selects the worker Harness without changing the main Session and saves it wi
   await click(zh.save)
   expect(server.settings.executor.harness).toBe('claude-code')
 })
+it('offers the Harnesses the Provider lists, and keeps a saved one it no longer offers visible', async () => {
+  server.harnesses = [{ id: 'dsh', label: 'DSH 原生' }, { id: 'gemini', label: 'Gemini' }]
+  server.settings.executor.harness = 'codex'
+  at({ page: 'settings', query: { group: 'execution' } })
+  await mount()
+  const tabs = () => all(`[role=tablist][aria-label="${zh.executorHarness}"] [role=tab]`).map(item => item.textContent)
+  expect(tabs()).toEqual(['DSH 原生', 'Gemini', 'codex（不可用）'])
+  await click('Gemini')
+  await click(zh.save)
+  expect(server.settings.executor.harness).toBe('gemini')
+  expect(tabs()).toEqual(['DSH 原生', 'Gemini'])
+})
 it('lists Tickets under Execution by who they wait on, with the Executor state and its pause as an action', async () => {
   server.tickets.open = [ticketSummary(), ticketSummary({ id: 't2', title: '执行中的工单', threads: [{ key: 'github:7',
     source: 'github', title: '#7 x', facts: { number: { value: '#7' }, autoMerge: { label: { zh: '自动合并', en: 'Auto-merge' },

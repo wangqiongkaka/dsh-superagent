@@ -74,7 +74,9 @@ function EnvironmentVariables({ groups, sources,
   </DisclosureRow>
 }
 export function ExecutionSettings() {
-  const { t } = usePanel()
+  const { t, call } = usePanel()
+  // The Harness Provider says which Harnesses run workers; polled, so one installed meanwhile shows up.
+  const { data: harnesses } = usePoll(() => call('GET harnesses'), [], 60_000)
   const { blocks, environment, sources } = useSettings().settings
   // Keep raw user text (such as separators between blocked commands) in the draft and parse only on save.
   const executor = blocks.executor.value
@@ -97,7 +99,10 @@ export function ExecutionSettings() {
           <h2 className="dt-block-title">{t('term.executor')}<InfoTip text={t('executorIntro')} /></h2>
           <Field label={t('executorHarness')} hint={t('executorHarnessHint')}>
             <SegmentedControl label={t('executorHarness')} value={value.harness} onChange={harness => edit({ harness })}
-              options={[{ value: 'dsh', label: 'DSH' }, { value: 'codex', label: 'Codex' }, { value: 'claude-code', label: 'Claude Code' }]} />
+              options={[...(harnesses ?? []).map(({ id, label }) => ({ value: id, label })),
+                // A saved Harness the Provider no longer offers stays visible, so the panel never swaps it silently.
+                ...harnesses?.some(option => option.id === value.harness) ? [] : [{ value: value.harness,
+                  label: harnesses ? t('harnessUnavailableOption', { name: value.harness }) : value.harness }]]} />
           </Field>
           {value.harness === 'dsh' ? <Section title={t('executorModel')} hint={t('executorModelHint')}><ModelField id="dt-worker-model" value={value.model}
             onChange={model => edit({ model })} /></Section> : <Section title={t('executorModel')}>

@@ -9,7 +9,7 @@ import { z } from 'zod'
 import { key, liveTicket, latestAssignment, type Ticket } from '../core/index.ts'
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import { ExternalTools } from './external-tools.ts'
-import { configurableHarness, HarnessCatalogSchema, harnessOf } from './harness.ts'
+import { configurableHarness, HarnessCatalogSchema, harnessOf, harnessOptions } from './harness.ts'
 import type { ExternalHarness, HarnessSelection } from '../policy.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { scopeWorkerSubprocess } from '../infra/environment.ts'
@@ -100,6 +100,8 @@ function noWait({ name, arguments: input }: { name: string; arguments: unknown }
  * Feeds session events into `RetryHealth` to report model budget waits on the `models` `HealthEntry`, and durably records which prompt revisions each session has worked under in `Store` (`KV.sessions.prompts`) to authorize prompt version reads.
  */
 export class Sessions {
+  /** The Harnesses workers may run on, as the Harness Provider in this Profile offers them. */
+  harnesses() { return harnessOptions(this.host.context) }
   async models(harness: ExternalHarness) {
     const bridge = configurableHarness(this.host.context)
     return HarnessCatalogSchema.parse(await bridge.models!({ sessionId: this.host.masterId, harness }))

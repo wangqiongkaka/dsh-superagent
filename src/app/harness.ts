@@ -15,8 +15,15 @@ export const HarnessCatalogSchema = z.object({
 })
 export type HarnessCatalog = z.infer<typeof HarnessCatalogSchema>
 
+/** A Harness a worker may run on, as the Provider offers it. */
+export const HarnessOptionSchema = z.object({ id: z.string(), label: z.string() })
+export type HarnessOption = z.infer<typeof HarnessOptionSchema>
+/** What a Provider from before `managedHarnesses` runs workers on. */
+const LEGACY_HARNESSES: HarnessOption[] = [{ id: 'dsh', label: 'DSH' }, { id: 'codex', label: 'Codex' }, { id: 'claude-code', label: 'Claude Code' }]
+
 interface HarnessBridge {
   readonly managedSessionOptionsVersion?: number
+  managedHarnesses?(request: Record<string, never>): Promise<unknown>
   models?(request: { sessionId: string; harness: ExternalHarness }): Promise<unknown>
   validateManagedSessionSelection?(sessionId: string, harness: ExternalHarness, selection: HarnessSelection): Promise<void>
   linkProjects?(request: { sessionId: string; workspaceIds: string[]; paths: string[] }): Promise<unknown>
@@ -25,6 +32,12 @@ interface HarnessBridge {
   releaseManagedSession(id: string, owner: string): Promise<void>
 }
 export const harnessOf = (ctx: Context) => ctx.get('harness' as never) as HarnessBridge | undefined
+/** The Harnesses workers may run on here: the Provider's installed managed ones, else DSH alone without a Provider. */
+export async function harnessOptions(ctx: Context): Promise<HarnessOption[]> {
+  const bridge = harnessOf(ctx)
+  if (typeof bridge?.manageSession !== 'function') return LEGACY_HARNESSES.slice(0, 1)
+  return typeof bridge.managedHarnesses === 'function' ? z.array(HarnessOptionSchema).parse(await bridge.managedHarnesses({})) : LEGACY_HARNESSES
+}
 export function configurableHarness(ctx: Context) {
   const bridge = harnessOf(ctx)
   if (!bridge || (bridge.managedSessionOptionsVersion ?? 0) < 1 || !bridge.models || !bridge.validateManagedSessionSelection) {
