@@ -18,7 +18,7 @@ import { Store } from '../src/app/store.ts'
 import { Commands } from '../src/infra/commands.ts'
 import { inputMessage } from '../src/executor/dsh.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
-import { IM_WORDS, NOTE_WORDS, checkedImText } from '../src/infra/text.ts'
+import { IM_WORDS, NOTE_WORDS, REPLY_CHARS, checkedImText, checkedReplyText } from '../src/infra/text.ts'
 import { SettingsSchema } from '../src/policy.ts'
 import { feishuKind, feishuTrigger } from '../src/sources/feishu.ts'
 import { githubKind } from '../src/sources/github.ts'
@@ -187,7 +187,7 @@ async function drive(host: Host) {
   await runtime.idle()
   const [workerA, workerB] = [a, b].map(workerSessionId) as [string, string]
   await run(workerA, 'orchestrator_report', { state: 'progress', summary: 'Needs a decision.', human_action: 'Desktop too?' })
-  await run(workerA, 'orchestrator_report', { state: 'progress', summary: 'It reads the config.', human_action: null, reply_to_trigger_id: request.id })
+  await run(workerA, 'orchestrator_report', { state: 'progress', summary: 'It reads the config.', public_reply: '它读取的是配置。', human_action: null, reply_to_trigger_id: request.id })
   const other = feishu('9', '@bot 顺便看看这个')
   await runtime.receive(other)
   await run(master, 'orchestrator_route', { decisions: [{ kind: 'attach', ticket_id: a, trigger_id: other.id }] })
@@ -202,7 +202,7 @@ async function drive(host: Host) {
   await run(master, 'orchestrator_ticket_note', { ticket_id: a, text: 'Ticket B changes the same settings page.' })
   await runtime.pump()
   await runtime.idle()
-  await run(workerA, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
+  await run(workerA, 'orchestrator_report', { state: 'ready', summary: 'Done.', public_reply: '已修复回归。' })
   const resumed = feishu('2', '再加一个按钮', { mentions: [], root_id: 'om_1' })
   await runtime.receive(resumed)
   runtime.engine.attach(a, resumed.id)
@@ -383,6 +383,8 @@ it('names only registered tools, schema options, environment variables and gloss
 it('enforces the word limits the text states', async () => {
   expect(checkedImText(words(IM_WORDS))).toBe(words(IM_WORDS))
   expect(() => checkedImText(words(IM_WORDS + 1))).toThrow(`maximum is ${IM_WORDS}`)
+  expect(checkedReplyText('长'.repeat(REPLY_CHARS))).toHaveLength(REPLY_CHARS)
+  expect(() => checkedReplyText('长'.repeat(REPLY_CHARS + 1))).toThrow(`maximum is ${REPLY_CHARS}`)
   const attach = (note: string) =>
     host.run(host.runtime.masterId, 'orchestrator_route', { decisions: [{ kind: 'attach', ticket_id: 'unknown', trigger_id: 'unknown', note }] })
   // A note over the limit refuses its item alone; one at the limit goes on to the Engine, which knows no such ticket.

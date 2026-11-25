@@ -142,7 +142,7 @@ it('returns the final MCP report before closing the worker process', async () =>
   const server = (await context()).mcpServers[0]!
   try {
     const response = await fetch(server.url, { method: 'POST', headers: { authorization: server.headers[0]!.value },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orchestrator_report', arguments: { state: 'ready', summary: '修复完成' } } }) })
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'orchestrator_report', arguments: { state: 'ready', summary: '修复完成', public_reply: '修复完成' } } }) })
     expect((await response.json()).result.isError).toBeUndefined()
     expect(h.runtime.store.tickets.get(ticket.id)?.ended?.outcome).toBe('completed')
     expect(release).not.toHaveBeenCalled()

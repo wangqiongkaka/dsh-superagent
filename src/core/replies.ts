@@ -78,10 +78,15 @@ export class Replies extends EnginePart {
   }
   /** Publish only an explicitly authored Feishu reply, never the internal report summary. */
   reportDelivery(ticket: Ticket, text: string, answerTo?: string): boolean {
-    const target = answerTo ? this.repo.triggers.get(answerTo) : this.source(ticket)
-    if (!target?.human || target.channel?.source !== 'feishu') return false
-    this.options.outbox.send({ id: reportReplyId(ticket, answerTo), channel: target.channel, text, kind: 'reply', ticketId: ticket.id })
+    const channel = this.publicChannel(ticket, answerTo)
+    if (!channel) return false
+    this.options.outbox.send({ id: reportReplyId(ticket, answerTo), channel, text, kind: 'reply', ticketId: ticket.id })
     return true
+  }
+  /** The Feishu conversation of the person a ready result or an answer goes to, which only the executor's own text reaches. */
+  publicChannel(ticket: Ticket, answerTo?: string): ChannelRef | undefined {
+    const target = answerTo ? this.repo.triggers.get(answerTo) : this.source(ticket)
+    return target?.human && target.channel?.source === 'feishu' ? target.channel : undefined
   }
   /** Withdraw a ticket's question for a person from the outbox, unless it went out already. */
   withdrawAttention(attentionId: string): void { this.options.outbox.withdraw(key('attention-reply', attentionId)) }

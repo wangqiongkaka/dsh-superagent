@@ -49,7 +49,7 @@ describe('repository bindings', () => {
       read.mockResolvedValueOnce(pull(first.login)).mockResolvedValueOnce(pull(backend.login))
       await host.runTool(sessionId, 'orchestrator_report', args)
       expect(host.runtime.store.tickets.get(ticket.id)!.follows).toHaveLength(2)
-      await host.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Both changes ready' })
+      await host.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Both changes ready', public_reply: 'Both changes ready' })
       const source = host.runtime.context(gitKind)
       const closedAt = new Date(Date.now() + 1000).toISOString()
       source.tickets.threadClosed({ source: 'git', id: forgeThread(first, 'pull', 1) }, 'merged', closedAt)

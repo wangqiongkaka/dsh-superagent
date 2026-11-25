@@ -31,7 +31,7 @@ import { feishuTrigger } from '../src/sources/feishu.ts'
 import { answerFromCard, cardAnswerId } from '../src/sources/feishu-card.ts'
 import { feishuChannel } from '../src/sources/feishu-trigger.ts'
 import { commentTrigger, githubChannel } from '../src/sources/github-trigger.ts'
-import { IM_WORDS } from '../src/infra/text.ts'
+import { IM_WORDS, REPLY_CHARS, wordCount } from '../src/infra/text.ts'
 import { observePull, pullOf } from '../src/sources/github-pull.ts'
 import { credentialHelper, workerGitConfig } from '../src/infra/environment.ts'
 import { policyHistory } from '../src/app/settings-history.ts'
@@ -325,7 +325,7 @@ it.each(['代码审核', '代码解释'])('accepts %s as read-only analysis and 
   await runtime.idle()
   expect(ticket.execution!.assignment).toContain(rule.instruction)
   expect(sections.get(`worker-${ticket.id}`)!.text({})).toContain('代码审核和代码解释仅交付只读分析，不修改代码')
-  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'ready', summary: '已核实准入路径，分析见报告；未修改代码。' })
+  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'ready', summary: '已核实准入路径，分析见报告；未修改代码。', public_reply: '已核实准入路径，分析见报告；未修改代码。' })
   expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toMatchObject({ state: 'ready' })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '代码分析已完成，未修改代码。' })).resolves.toBeDefined()
 })
@@ -372,7 +372,7 @@ it('records worker reports, binds the task PR, ends the ticket on ready without 
   expect(pullOf(bound)).toBe(42)
   expect(bound.attention).toBeUndefined()
   expect(runtime.store.threads.get('github:42')?.subscriptions).toEqual([ticket.id])
-  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed', public_reply: 'reviewed' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toBeUndefined()
   expect(relays(runtime.masterId).at(-1)).toMatchObject({ kind: 'worker_report', state: 'ready' })
   expect(await runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '已提交 PR #42，待 review。' })).toEqual({ status: 'sent' })
@@ -409,6 +409,25 @@ it('posts the complete decision request and ready conclusion to Feishu without a
   expect(sent()).toHaveLength(3)
 })
 
+it('asks a long Feishu question as written, as text or as a card, past the acknowledgement\'s word limit', async () => {
+  const { sessionId } = await acceptedTicket()
+  const lark = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  const question = (topic: string) => `${topic}的类型从哪里来？\n\n` + 'A. 从模板生成：沿用现有入口，数组类型要手动确认。\nB. 粘贴 JSON 示例：能识别数组，但需要真实值。\n'.repeat(25) + '\n推荐 A，它不需要真实数据。'
+  const text = question('参数')
+  expect(text.length).toBeGreaterThan(1000)
+  expect(wordCount(text)).toBeGreaterThan(IM_WORDS)
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'ask', human_action: text })
+  await runtime.idle()
+  expect(lark().at(-1)).toEqual(expect.arrayContaining(['--markdown', text]))
+  const settings = runtime.store.settings(), feishuSource = settings.sources.feishu!
+  runtime.store.saveSettings({ ...settings, sources: { ...settings.sources, feishu: { ...feishuSource, config: { ...feishuSource.config, cards: true } } } })
+  const card = question('请求头')
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'ask', human_action: card, human_options: [{ label: 'A', recommended: true }, { label: 'B' }] })
+  await runtime.idle()
+  const content = lark().at(-1)![lark().at(-1)!.indexOf('--content') + 1]!
+  expect(content).toContain(JSON.stringify(card).slice(1, -1))
+})
+
 it('asks a question with options as a Feishu card with cards on, and hands the asked person\'s click to the worker alone', async () => {
   const { sessionId, ticket } = await acceptedTicket()
   const settings = runtime.store.settings(), feishuSource = settings.sources.feishu!
@@ -433,14 +452,18 @@ it('asks a question with options as a Feishu card with cards on, and hands the a
   expect(lark().some(args => args.slice(0, 3).join(' ') === 'api PATCH /open-apis/im/v1/messages/om_card')).toBe(true)
 })
 
-it('delivers an explicit Feishu answer to its own message and rejects overlong public text atomically', async () => {
+it('delivers an explicit Feishu answer to its own message, and refuses a missing or overlong public text atomically', async () => {
   const { sessionId, ticket } = await acceptedTicket()
   const asked = feishu('12', '为什么不能推断数组？', { root_id: 'om_1', mentions: [] })
   await receive(asked)
   const base = { state: 'progress', summary: 'internal report', reply_to_trigger_id: asked.id }
-  await expect(runTool(sessionId, 'orchestrator_report', { ...base, public_reply: 'word '.repeat(101) })).rejects.toThrow('maximum is 100')
+  await expect(runTool(sessionId, 'orchestrator_report', { ...base, public_reply: '长'.repeat(REPLY_CHARS + 1) })).rejects.toThrow(`<=${REPLY_CHARS} characters`)
+  // Without its own text, the answer would fall to the main Session's rewrite of a truncated summary.
+  await expect(runTool(sessionId, 'orchestrator_report', base)).rejects.toThrow('needs public_reply')
   expect(runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.report).toBeUndefined()
-  const text = '占位符只提供字段名。数组类型需要显式指定，或从含数组值的 JSON 示例识别。'
+  // Past the acknowledgement's word limit, a complete answer still goes out as written.
+  const text = '占位符只提供字段名。数组类型需要显式指定，或从含数组值的 JSON 示例识别。\n\n' + '依据：模板里只有参数名，没有示例值。'.repeat(20)
+  expect(wordCount(text)).toBeGreaterThan(IM_WORDS)
   await runTool(sessionId, 'orchestrator_report', { ...base, public_reply: text })
   const replies = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply' && args.includes('om_12'))
   expect(replies()).toHaveLength(1)
@@ -482,7 +505,7 @@ it('shows a message that carries JSON, with or without a label, as its label and
 
 it('ends a ticket on ready when no PR is bound', async () => {
   const { ticket, sessionId } = await acceptedTicket()
-  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'done locally' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'done locally', public_reply: 'done locally' })
   expect(runtime.store.tickets.get(ticket.id)).toMatchObject({ ended: expect.objectContaining({ outcome: 'completed' }) })
   await expect(runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: 'late' })).rejects.toThrow('Ticket ended')
 })
@@ -1511,11 +1534,12 @@ it('tells the main Session of each requeue of the same Trigger', async () => {
   expect(requeued()).toBe(2)
 })
 
-it('keeps replies and acknowledgements to an IM conversation within the IM limit', async () => {
-  const { ticket, trigger, sessionId } = await acceptedTicket()
+it('keeps acknowledgements to an IM conversation within the IM word limit, but not a Feishu result', async () => {
+  const { trigger, sessionId } = await acceptedTicket()
   const long = Array.from({ length: IM_WORDS + 1 }, () => 'word').join(' ')
-  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed' })
-  await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: long })).rejects.toThrow(`maximum is ${IM_WORDS}`)
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'reviewed', public_reply: long })
+  const sent = vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  expect(sent.at(-1)).toEqual(expect.arrayContaining(['--markdown', long]))
   const follow = feishu('3', '还有一个问题', { mentions: [], root_id: trigger.meta.messageId as string, sender_id: MEMBER })
   await receive(follow)
   await expect(runTool(sessionId, 'orchestrator_ack', { trigger_id: follow.id, text: long })).rejects.toThrow(`at most ${IM_WORDS} words`)
@@ -1591,7 +1615,7 @@ it('tells the conversation that the PR merged when work a restart recovered ends
   const id = key('pr-terminal', '42', 'feishu', JSON.stringify({ chatId: CHAT, messageId: 'om_1' }), 'merged')
   expect(runtime.store.replyStatus(id)).toBeUndefined()
   // Its ready report ends the ticket with the PR, and the conversation hears of the merge once.
-  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Recovered and verified' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Recovered and verified', public_reply: 'Recovered and verified' })
   expect(runtime.store.tickets.get(ticket.id)!.ended).toMatchObject({ outcome: 'merged' })
   expect(runtime.store.replyStatus(id)).toBeDefined()
   // The report that ended the ticket was the worker's own: its turn is not cancelled inside that tool call.
@@ -1621,7 +1645,7 @@ it('restarts a worker that was mid-work when the host stopped with the recovery 
 it('keeps the report of a blocked, failed or ready worker whose turn ends, and relays nothing more', async () => {
   for (const state of ['blocked', 'failed', 'ready'] as const) {
     const { ticket, sessionId } = await acceptedTicket(feishu(String(20 + ['blocked', 'failed', 'ready'].indexOf(state)), `@bot 修 ${state}`, { root_id: undefined }))
-    await runTool(sessionId, 'orchestrator_report', { state, summary: `${state} report` })
+    await runTool(sessionId, 'orchestrator_report', { state, summary: `${state} report`, ...state === 'ready' ? { public_reply: 'ready report' } : {} })
     const relayed = relays(runtime.masterId).length
     const agent = agents.get(sessionId)! as { status: string }
     agent.status = 'idle'

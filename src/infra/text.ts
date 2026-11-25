@@ -19,7 +19,14 @@ export function checkedImText(text: string): string {
   if (count > IM_WORDS) throw new Error(`IM message has ${count} words; maximum is ${IM_WORDS}. Rewrite as a short high-level update. Do not split it into multiple messages.`)
   return text
 }
-export const fill = (template: string, values: Record<string, string>): string => template.replace(/\{(\w+)\}/g, (_, name: string) => values[name] ?? '')
+/** Most characters of a Feishu reply body: a complete result or question, well under Feishu's 30 KB request body. */
+export const REPLY_CHARS = 6000
+/** Validates that a Feishu reply body, sent as written, does not exceed `REPLY_CHARS`. */
+export function checkedReplyText(text: string): string {
+  if (text.length > REPLY_CHARS) throw new Error(`Feishu message has ${text.length} characters; maximum is ${REPLY_CHARS}. Keep the conclusion and key details; move raw evidence to the PR or the internal summary.`)
+  return text
+}
+export const fill =(template: string, values: Record<string, string>): string => template.replace(/\{(\w+)\}/g, (_, name: string) => values[name] ?? '')
 /** Case-insensitive comparison for GitHub logins and repository names. */
 export const sameName = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase()
 export const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

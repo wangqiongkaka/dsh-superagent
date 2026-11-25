@@ -2,7 +2,7 @@
 import { z } from 'zod'
 import { key, liveTicket, type EngineForExecutor, type Ticket } from '../../core/index.ts'
 import { reportReplyId } from '../../core/replies.ts'
-import { IM_WORDS } from '../../infra/text.ts'
+import { IM_WORDS, REPLY_CHARS } from '../../infra/text.ts'
 import { claimPull, readPull } from '../../sources/github-pull.ts'
 import { claimForgePull } from '../../sources/git.ts'
 import { ForgeApi } from '../../sources/forge-api.ts'
@@ -80,11 +80,11 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
       schema: z.object({
         state: z.enum(['progress', 'ready', 'blocked', 'failed', 'dropped']),
         summary: z.string().min(1),
-        public_reply: z.string().max(6000).refine(text => !!text.trim()).optional()
-          .describe('Final Markdown for a Feishu ready result or explicit answer (reply_to_trigger_id), sent unchanged. Include the necessary conclusion, reasoning and next step. No private diagnostics. At most 100 words.'),
+        public_reply: z.string().max(REPLY_CHARS).refine(text => !!text.trim()).optional()
+          .describe(`Required for a ready result or explicit answer (reply_to_trigger_id) whose person wrote in Feishu: the complete final Markdown, sent unchanged and never summarized again. State the conclusion, key reasoning and evidence, what was verified and what was not, limits or risks, and the next step, with real PR links. No credentials, local paths, raw logs or test commands. At most ${REPLY_CHARS} characters.`),
         failure_reason: z.string().trim().min(1).max(240).optional().describe('For failed only: one short reason safe to post to the original request. Exclude credentials, paths, private data and raw logs.'),
-        human_action: z.string().max(1000).refine(text => !!text.trim()).nullish()
-          .describe('Full question as the recipient should see it, including context, options and recommendation when relevant. Sent unchanged to Feishu, at most 100 words. Omit to keep the pending question, null to clear it.'),
+        human_action: z.string().max(REPLY_CHARS).refine(text => !!text.trim()).nullish()
+          .describe(`Full question as the recipient should see it: the background, what each option means and how they differ, the recommendation and why, and what to confirm. Sent unchanged to Feishu, at most ${REPLY_CHARS} characters. Omit to keep the pending question, null to clear it.`),
         human_options: z.array(z.object({ label: z.string().trim().min(1).max(40), recommended: z.boolean().optional() }).strict())
           .min(2).max(4).optional()
           .describe('With human_action, for a single-choice question: 2-4 short option labels. Feishu may show them as buttons plus a free-text answer; human_action must still describe every option.'),

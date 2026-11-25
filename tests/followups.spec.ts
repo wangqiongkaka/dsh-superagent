@@ -136,7 +136,7 @@ it('takes the message a follow-up answers from its Source kind, whichever kind i
 it('keeps ended tickets asleep across pause and resumes only the ticket selected by the main Session', async () => {
   h = await startRuntime()
   const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
-  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done' })
+  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done', public_reply: 'Done' })
   await h.runtime.settings.pause(true, 'panel')
   h.deliveries.mockClear()
   const message = followup('2', '再改一下标题')

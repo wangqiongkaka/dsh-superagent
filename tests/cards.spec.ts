@@ -39,7 +39,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ["A dropped message never arrives, and nobody resends it elsewhere", "replies", ["丢弃的回复永远不会到达，因为会话已不能接收或来源已不再监听；不要改发到其他地方。", "被丢弃的确认也永远不会到达：不要改发别处；若人工未收到确认会产生影响，在报告 summary 中说明。"]],
   ["The main Session has no tool that messages a worker", "replies", ["回复时使用来源路由元数据和执行器报告；技术事实不足时等待报告，或在工单空闲时用 orchestrator_ticket_request_status 请求报告，不要自行调查。"], ["ask the worker"]],
   ["The main Session has no tool that messages a worker", "shared", ["除研判过程外，主会话不得自行查看代码、详细日志、链接文档或技术讨论，也不得自行解决执行器的阻塞；这些工作交给执行器。"], ["delegate"]],
-  ["The main Session has no tool that messages a worker", "cli", ["其他上下文读取和本地下载交给执行器；主会话路由工单，并通过 orchestrator_reply 发送简短报告。"], ["delegate"]],
+  ["The main Session has no tool that messages a worker", "cli", ["其他上下文读取和本地下载交给执行器；主会话路由工单，并通过 orchestrator_reply 发送仍由它交付的回复；飞书结论和回答由执行器的 public_reply 原样送达。"], ["delegate"]],
   ["The main Session has no tool that messages a worker", "dispatch", [], ["Ask a worker"]],
   ["The main Session has no tool that messages a worker", "handoff-orchestrator", [], ["ask the worker"]],
   ["The main Session has no tool that messages a worker", "skill github", [], ["orchestrator forwarding"]],

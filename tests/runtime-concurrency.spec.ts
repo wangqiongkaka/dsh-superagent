@@ -356,7 +356,7 @@ describe('a worker whose work runs in the background', () => {
     await handsOff({ state: 'failed', summary: 'The build broke.' })
   })
   it('frees the slot of a worker that reports ready on a ticket that follows its pull request', async () => {
-    await handsOff({ state: 'ready', summary: 'PR ready' }, ticketId => { h.runtime.engine.bindThread(ticketId, { source: 'github', id: '7' }, true) })
+    await handsOff({ state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }, ticketId => { h.runtime.engine.bindThread(ticketId, { source: 'github', id: '7' }, true) })
   })
   it('frees the slot of a worker that asks a person a question with a progress report', async () => {
     await handsOff({ state: 'progress', summary: 'The server runs.', human_action: 'Does the button look right?' })
@@ -379,11 +379,11 @@ describe('a worker whose work runs in the background', () => {
     expect(agent.status).toBe('running')
   })
   it('leaves the jobs a worker left to a person out of a later turn\'s background work, and does not kill them at the limit', async () => {
-    const one = await handsOff({ state: 'ready', summary: 'PR ready' }, ticketId => { h.runtime.engine.bindThread(ticketId, { source: 'github', id: '7' }, true) })
+    const one = await handsOff({ state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }, ticketId => { h.runtime.engine.bindThread(ticketId, { source: 'github', id: '7' }, true) })
     const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
     // A second server, left too; then a note from the orchestrator wakes the worker, whose turn ends without a report.
     const server = h.jobs.run(one.sessionId, 'pnpm preview')
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Preview up' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Preview up', public_reply: 'Preview up' }); await h.runtime.idle()
     idle(one.sessionId); await h.runtime.idle()
     await vi.waitFor(() => expect(h.jobs.service.wait).toHaveBeenCalledWith(server, expect.any(Number), one.sessionId, expect.anything()))
     await new Promise(resolve => setTimeout(resolve, 5))
@@ -397,7 +397,7 @@ describe('a worker whose work runs in the background', () => {
   it('records each end of a worker\'s turn on its Assignment, also after its ready report', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }); await h.runtime.idle()
     const report = latestAssignment(h.runtime.store.tickets.get(one.ticket.id)!)!.report!
     await new Promise(resolve => setTimeout(resolve, 5))
     idle(one.sessionId); await h.runtime.idle()
@@ -415,7 +415,7 @@ describe('a worker whose work runs in the background', () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
     const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }); await h.runtime.idle()
     idle(one.sessionId); await h.runtime.idle()
     // A person asks for more; the worker acknowledges it, starts the work in the background and its turn ends.
     await new Promise(resolve => setTimeout(resolve, 5))
@@ -434,7 +434,7 @@ describe('a worker whose work runs in the background', () => {
     const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
     // The ticket follows its pull request, so a ready report leaves it open.
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' })
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready', public_reply: 'PR ready' })
     idle(one.sessionId); await h.runtime.idle()
     expect(h.runtime.executor.activeCount()).toBe(0)
     // A person asks for more; the worker starts the tests in the background and ends its turn.
@@ -507,7 +507,7 @@ describe('a worker whose work runs in the background', () => {
     const agent = h.agents.get(one.sessionId)!
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
     h.subagents.spawn(one.sessionId)
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }); await h.runtime.idle()
     // A person's message is on its way into the worker's Session, held there, as the worker hands off; the release is slow.
     const session = deferred(), drain = deferred(), release = h.subagents.service.drainChildren.getMockImplementation()!
     h.subagents.service.drainChildren.mockImplementationOnce(async (parent, ids) => { await drain.promise; await release(parent, ids) })
@@ -582,7 +582,7 @@ describe('a worker whose work runs in the background', () => {
     const agent = h.agents.get(one.sessionId)!
     h.subagents.settle(h.subagents.spawn(one.sessionId))
     // Its ready report ends the ticket, and it ends its own turn.
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done' })
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done', public_reply: 'Done' })
     await h.runtime.idle(); await new Promise(resolve => setTimeout(resolve, 10))
     expect(agent.cancel).not.toHaveBeenCalled()
     // A release that fails after the ends woke the worker still cancels that turn.
@@ -634,7 +634,7 @@ describe('what a worker read', () => {
   /** A ticket its worker completed, and a person's thanks on its thread, which resumes it once received. */
   async function completed() {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done', public_reply: 'Done' }); await h.runtime.idle()
     idle(one.sessionId)
     await later()
     return { one, thanks: feishu('2', '@bot 谢谢', { root_id: 'om_1' }), ticket: () => h.runtime.store.tickets.get(one.ticket.id)! }
@@ -750,7 +750,7 @@ describe('what a worker read', () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
     const ticket = () => h.runtime.store.tickets.get(one.ticket.id)!
     h.runtime.engine.bindThread(one.ticket.id, { source: 'github', id: '7' }, true)
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'ready', summary: 'PR ready', public_reply: 'PR ready' }); await h.runtime.idle()
     // A person's thanks reaches the worker after the step of its report, and its turn ends with no step taking it.
     await later()
     const thanks = feishu('2', '@bot 谢谢', { root_id: 'om_1' })
@@ -819,7 +819,7 @@ it('resumes an ended ticket a person wrote to during a pause once it lifts, unde
   }
   const ended = async (id: string) => {
     const { ticket, sessionId } = await h.acceptedTicket(feishu(id, `@bot 修${id}`, { root_id: `om_${id}` }))
-    await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
+    await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.', public_reply: 'Done.' })
     return ticket.id
   }
   const first = await ended('1'), second = await ended('3')

@@ -1,7 +1,7 @@
 /** Feishu outbound channel: posts threaded bot replies and constructs chat deep links. */
 import type { OutboundMessage } from '../core/index.ts'
 import { CliError } from '../infra/commands.ts'
-import { checkedImText } from '../infra/text.ts'
+import { checkedImText, checkedReplyText } from '../infra/text.ts'
 import type { SourceContext } from './host.ts'
 import type { ChannelLink, ChannelLinks } from './kind.ts'
 import { feishuTriggerId } from './feishu-trigger.ts'
@@ -24,7 +24,7 @@ const gone = (error: unknown): boolean => error instanceof CliError && error.cod
 export async function sendFeishu(host: Pick<SourceContext, 'commands'>, message: OutboundMessage, config?: Pick<FeishuConfig, 'cards'>): Promise<'sent' | 'gone'> {
   const messageId = message.channel.address.messageId
   if (!messageId) throw new Error('Missing Feishu reply target')
-  const text = checkedImText(message.text)
+  const text = message.kind === 'acknowledgement' ? checkedImText(message.text) : checkedReplyText(message.text)
   const reply = async (threaded: string[], plain: string[]) => {
     const base = ['im', '+messages-reply', '--message-id', messageId, '--idempotency-key', message.id]
     try { await host.commands.lark([...base, ...threaded, '--reply-in-thread']) }

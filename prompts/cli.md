@@ -3,7 +3,7 @@ DSH_SUPERAGENT_REPOSITORIES 非空时，其 JSON 清单覆盖旧版单 GitHub �
 worktree 清单覆盖上述克隆指令：使用每个明确的 directory，不要假定它位于会话目录下。主仓库可能仅用于承载会话，不得为它编造任务。带有 branch 的条目已位于任务分支。不得重建、删除、清理或重置受管 worktree，不得修改共享 Git 配置或原始工作区。每次提交使用 git -c user.name=<login> -c user.email=<email>，不要修改本地配置；推送和获取时明确使用清单中的 HTTPS URL 和已配置凭据，不得使用其他账号或 SSH 身份。
 订阅控制消息推送，不限制 CLI 读取权限。
 主会话使用 orchestrator_eval_read 进行主动研判。
-其他上下文读取和本地下载交给执行器；主会话路由工单，并通过 orchestrator_reply 发送简短报告。
+其他上下文读取和本地下载交给执行器；主会话路由工单，并通过 orchestrator_reply 发送仍由它交付的回复；飞书结论和回答由执行器的 public_reply 原样送达。
 读取时不得改变远端状态、授权或配置。
 所有 GitHub 调用都使用 gh，并指定 --repo 或明确的 API 路径。
 监听器仍只监听本部署仓库；链接指向的其他位置可以按需读取上下文。

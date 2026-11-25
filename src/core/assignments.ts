@@ -113,6 +113,10 @@ export class Assignments extends EnginePart {
     }
     if (report.askedBy && !person(report.askedBy, true)) throw new UserError('notAsker')
     if (report.answers && !person(report.answers, false)) throw new UserError('notAnswerable')
+    // Feishu gets the executor's own complete text, never the main Session's rewrite of a truncated summary.
+    if ((report.answers || report.state === 'ready') && !report.publicReply?.trim() && this.replies.publicChannel(ticket, report.answers)) {
+      throw new UserError('publicReplyRequired')
+    }
     const assignment = runningAssignment(ticket) ?? latestAssignment(ticket)
     if (!assignment) throw new UserError('unknownAssignment')
     if (assignment.state === 'ended') throw new UserError('assignmentEnded')

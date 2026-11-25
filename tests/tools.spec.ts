@@ -247,12 +247,15 @@ it('ignores a proactive candidate from its card beside other decisions, marked s
 })
 
 it('returns where a reply stands: sent, or dropped when its conversation can no longer receive it', async () => {
-  const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
-  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.' })
-  const reply = (text: string) => h.runTool(h.runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text })
-  expect(await reply('修好了。')).toEqual({ status: 'sent' })
+  // A Feishu result goes out as the executor's public_reply; the main Session's result reply only reads where it stands.
+  const settle = async (trigger: ReturnType<typeof feishu>) => {
+    const { ticket, sessionId } = await h.acceptedTicket(trigger)
+    await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary: 'Done.', public_reply: '修好了。' })
+    return h.runTool(h.runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: '修好了，请看 PR。' })
+  }
+  expect(await settle(feishu('1', '@bot 修一下回归'))).toEqual({ status: 'sent' })
   vi.mocked(Commands.prototype.lark).mockRejectedValue(new CliError('the message was withdrawn', 230011))
-  expect(await reply('修好了，请看 PR。')).toEqual({ status: 'dropped' })
+  expect(await settle(feishu('2', '@bot 再修一个'))).toEqual({ status: 'dropped' })
 })
 
 it('checks an acknowledgement against the IM word limit, not a character count', async () => {
@@ -399,7 +402,7 @@ it('relays a worker\'s report with its ticket card and the start of its summary,
   expect(relaysOf('worker_attention').at(-1)).toEqual({ kind: 'worker_attention', state: 'progress', source_reply: 'pending', read: `ticket/${ticket.id}/result`,
     ticket: expect.objectContaining({ ticket_id: ticket.id, state: 'person/answer', attention: expect.objectContaining({ question: 'Desktop too?' }) }) })
   const summary = 'Done. ' + 'Evidence. '.repeat(100)
-  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary, human_action: null })
+  await h.runTool(sessionId, 'orchestrator_report', { state: 'ready', summary, public_reply: 'Done.', human_action: null })
   await h.runtime.idle()
   const report = relaysOf('worker_report').at(-1)!
   expect(report).toMatchObject({ ticket: { ticket_id: ticket.id, title: ticket.title }, trigger_id: trigger.id, state: 'ready', chars: summary.length,
