@@ -133,6 +133,32 @@ it('answers every routing tool in one shape: the decision it recorded, why, and 
   expect(TICKET_STATES).toContain(stopped.ticket.state)
 })
 
+it('replies in Feishu to an explicit request that starts no work, and once to the request of a ticket a person stopped', async () => {
+  const { ticket } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
+  const sent = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  const replyTo = (message: string) => sent().filter(args => args.includes(message)).map(args => args[args.indexOf('--markdown') + 1])
+  const before = sent().length
+  const thanks = feishu('2', '@bot 谢谢'), unbound = feishu('3', '@bot 帮我改个接口'), long = feishu('4', '@bot 随便聊聊'), stop = feishu('5', '@bot 不用修了')
+  for (const trigger of [thanks, unbound, long, stop]) h.runtime.receive(trigger)
+  await h.runtime.idle()
+  const { results } = await h.runTool(h.runtime.masterId, 'orchestrator_route', { decisions: [
+    { kind: 'ignore', trigger_id: thanks.id, reason: 'thanks' },
+    { kind: 'ignore', trigger_id: unbound.id, reason: 'no repository', reply: '请先让管理员为这个会话绑定仓库。' },
+    { kind: 'ignore', trigger_id: long.id, reason: 'chat', reply: words(IM_WORDS + 1) },
+    // A reply on another kind is left unread.
+    { kind: 'stop', trigger_id: stop.id, ticket_id: ticket.id, reason: 'Not needed', reply: 'unread' },
+  ] }) as { results: Record<string, unknown>[] }
+  expect(results[2]).toEqual({ trigger_id: long.id, kind: 'ignore', refused: expect.stringMatching(/^reply: /) })
+  expect(results[3]).toMatchObject({ kind: 'stop', decision: 'stop' })
+  await h.runtime.idle()
+  expect(replyTo('om_2')).toEqual(['这条消息未被接单为任务。如需处理，请明确说明要做的改动或问题。'])
+  expect(replyTo('om_3')).toEqual(['请先让管理员为这个会话绑定仓库。'])
+  expect(replyTo('om_4')).toEqual([])
+  expect(replyTo('om_5')).toEqual([])
+  expect(replyTo('om_1').at(-1)).toBe(`工单 ${ticket.id.slice(0, 12)} 已被人工停止，不再继续处理。如仍需处理，请重新发起请求。`)
+  expect(sent()).toHaveLength(before + 3)
+})
+
 it('routes several triggers in one call, in order, and answers a refused or failed item without undoing the others', async () => {
   const { ticket } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
   const thanks = feishu('2', '@bot 谢谢'), request = feishu('3', '@bot 另一个问题'), other = feishu('4', '@bot 顺便看看这个'), more = feishu('6', '@bot 还有这个')

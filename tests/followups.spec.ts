@@ -155,7 +155,7 @@ it('keeps ended tickets asleep across pause and resumes only the ticket selected
 it('tells the main Session nothing of a message it attached to an ended ticket, which resumes for it', async () => {
   h = await startRuntime()
   const { ticket, sessionId } = await h.acceptedTicket(feishu('1', '@bot 修一下回归'))
-  await h.runTool(sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
+  await h.runTool(sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do', public_reply: 'nothing to do' })
   const request = feishu('40', '@bot 上次那个改动还要改一下', { root_id: undefined })
   h.runtime.receive(request); await h.runtime.idle()
   await h.route({ kind: 'attach', ticket_id: ticket.id, trigger_id: request.id })

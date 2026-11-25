@@ -7,6 +7,7 @@ import type { AssessmentOutcome, Candidate, Policy } from './ports.ts'
 import { said, type Reason } from './reasons.ts'
 import { EnginePart, type EngineOptions } from './part.ts'
 import type { Tickets } from './tickets.ts'
+import type { Declined, Replies } from './replies.ts'
 
 /** An outcome for the Eval that holds a Trigger; `evalId` names the Eval it was judged for, so a later Eval refuses it. */
 export type Outcome = AssessmentOutcome & { evalId?: string }
@@ -25,7 +26,7 @@ const REQUEUES = 2
  * Engine routes the main Session's decisions, people's replays, worker handbacks, and the pass's Eval work here.
  */
 export class Evals extends EnginePart {
-  constructor(options: EngineOptions, private readonly tickets: Tickets) { super(options) }
+  constructor(options: EngineOptions, private readonly tickets: Tickets, private readonly replies: Replies) { super(options) }
 
   /**
    * Expire a Thread's Eval past its deadline (see `expire`), unless processing is paused: then the Eval notes when the
@@ -59,7 +60,11 @@ export class Evals extends EnginePart {
    */
   private expire(thread: Thread): void {
     const expired = (thread.expired ?? 0) + 1
-    if (expired > REQUEUES) { this.finish(thread, thread.evaluating!, { kind: 'unavailable', reason: [{ code: 'timeout' }] }); return }
+    if (expired > REQUEUES) {
+      const evaluation = thread.evaluating!
+      this.declined(evaluation, this.finish(thread, evaluation, { kind: 'unavailable', reason: [{ code: 'timeout' }] }), 'unavailable')
+      return
+    }
     const { id, triggerIds } = thread.evaluating!
     delete thread.evaluating
     thread.expired = expired
@@ -337,16 +342,19 @@ export class Evals extends EnginePart {
     // Requeue if Policy changed without a live policyChanged call (such as across an upgrade or restart).
     if (this.policy().version !== evaluation.policyVersion) {
       if (thread.evaluating?.id === evaluation.id) return this.reassess(thread, { code: 'policyChanged' })
-      return this.finish(thread, evaluation, { kind: 'unavailable', reason: [{ code: 'policyChanged' }], ...audit })
+      return this.declined(evaluation, this.finish(thread, evaluation, { kind: 'unavailable', reason: [{ code: 'policyChanged' }], ...audit }), 'unavailable')
     }
     // An inferred candidate ignored without an assessment, from its card, says so beside the reason given.
     const unassessed = outcome.kind === 'ignore' && evaluation.strength !== 'explicit' && !outcome.audit ? [{ code: 'ignoredFromCard' }] : []
-    if (outcome.kind === 'ignore' || outcome.kind === 'unavailable') return this.finish(thread, evaluation, { kind: outcome.kind,
-      reason: [...unassessed, ...reasonOf(outcome.reason)], ...audit })
+    if (outcome.kind === 'ignore' || outcome.kind === 'unavailable') return this.declined(evaluation, this.finish(thread, evaluation, { kind: outcome.kind,
+      reason: [...unassessed, ...reasonOf(outcome.reason)], ...audit }), outcome.kind, outcome.kind === 'ignore' ? outcome.reply : undefined)
     if (outcome.kind === 'stop') {
       const ticket = this.repo.tickets.get(outcome.ticketId)
-      if (!ticket || !liveTicket(ticket)) return this.finish(thread, evaluation, { kind: 'ignore', reason: [{ code: 'stopUnknown' }],
-        ...audit })
+      if (!ticket || !liveTicket(ticket)) {
+        const decision = this.finish(thread, evaluation, { kind: 'ignore', reason: [{ code: 'stopUnknown' }], ...audit })
+        // A stop routed again after it took effect, such as from a follow-up notice, leaves the stop's own reply alone.
+        return ticket?.ended?.outcome === 'stopped' ? decision : this.declined(evaluation, decision, 'stopUnknown')
+      }
       if (evaluation.strength !== 'explicit') return this.finish(thread, evaluation, { kind: 'ignore',
         reason: [{ code: 'stopNotExplicit' }], ...audit })
       const decision = this.finish(thread, evaluation, { kind: 'stop', reason: reasonOf(outcome.reason), ticketId: ticket.id, ...audit })
@@ -365,6 +373,14 @@ export class Evals extends EnginePart {
     const audit = outcome.audit ? { audit: outcome.audit } : {}
     const decision = this.finish(thread, evaluation, { kind: 'accept', reason: reasonOf(outcome.reason), ...audit, mandate, ticketId })
     this.tickets.create(ticketId, decision.id, mandate, evaluation, outcome, at)
+    return decision
+  }
+  /**
+   * Tell the sender of an explicit request that its Eval started no work. Inferred candidates stay silent, as do Evals that
+   * handed their Triggers on: routed to a ticket, queued again, or deleted, which never reach here.
+   */
+  private declined(evaluation: Pick<Evaluation, 'strength' | 'primary' | 'triggerIds'>, decision: Decision, why: Declined, reply?: string): Decision {
+    if (evaluation.strength === 'explicit') this.replies.reportDeclined(decision.id, evaluation.primary ?? evaluation.triggerIds.at(-1)!, why, reply)
     return decision
   }
   /** Record an Eval's Decision; the Thread's own Eval ends with it, while a gate-only one leaves the Thread's Eval going. */

@@ -54,6 +54,7 @@ const RouteItemSchema = z.object({
   acknowledgement: z.string().nullish().describe(`accept: one brief sentence of at most ${IM_WORDS} words naming the concrete change and intended result in the source language. It is posted as a reply to the original source on acceptance, so do not quote the source; quote an earlier proposal briefly only when the trigger merely confirms it and the sentence does not already state it. No generic I will handle it.`),
   note: z.string().nullish().describe(`accept and attach: ${RoutingNoteSchema.description ?? ''}`),
   reason: z.string().nullish().describe('ignore and stop: why, at most 500 characters; an ignore needs it.'),
+  reply: z.string().nullish().describe(`ignore of an explicit request: one brief sentence of at most ${IM_WORDS} words to the sender in the source language, saying why it was not taken on or what is needed, such as a question about the repository. Posted as written; omit it and the host posts a fixed note. Inferred candidates get nothing.`),
 }).strict()
 type RouteItem = z.infer<typeof RouteItemSchema>
 type Kind = RouteItem['kind']
@@ -66,6 +67,7 @@ const FIELDS: Record<Field, { check: z.ZodType; reads: readonly Kind[]; needs: r
   acknowledgement: { check: AcknowledgementSchema, reads: ['accept'], needs: ['accept'] },
   note: { check: RoutingNoteSchema, reads: ['accept', 'attach'], needs: [] },
   reason: { check: z.string().max(500), reads: ['ignore', 'stop'], needs: ['ignore'] },
+  reply: { check: AcknowledgementSchema, reads: ['ignore'], needs: [] },
 }
 /** Why an item cannot run: a field its kind needs is missing, or one it reads breaks its limit. */
 function invalid(item: RouteItem): string | undefined {
@@ -114,7 +116,7 @@ function route(host: MainToolsHost, item: RouteItem, decided: ReadonlyMap<string
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
     }
     case 'ignore': {
-      const decision = host.engine.decide(item.trigger_id, { kind: 'ignore', reason: item.reason! })
+      const decision = host.engine.decide(item.trigger_id, { kind: 'ignore', reason: item.reason!, ...(item.reply?.trim() ? { reply: item.reply.trim() } : {}) })
       return { ...fromDecision(decision), triggerIds: decision.triggerIds }
     }
   }
