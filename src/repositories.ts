@@ -70,18 +70,25 @@ export function selectRepositories(settings: Settings, trigger: Trigger, selecte
 export function validateRepositoryBindings(settings: Settings): void {
   const repositories = RepositoryListSchema.parse(settings.sources.git?.config.repositories ?? [])
   const config = settings.sources.feishu?.config ?? {}
-  const chats = (config.chats ?? []) as { chatId: string; repositories?: string; primaryRepository?: string }[]
-  for (const entry of [...chats, { repositories: String(config.directRepositories ?? ''), primaryRepository: String(config.directPrimaryRepository ?? '') }]) {
-    if (!entry.primaryRepository) continue
-    const ids = repositoryIds(entry.repositories ?? '')
-    if (!ids.includes(entry.primaryRepository)) throw new Error('主仓库必须是该群或私聊已绑定的仓库。')
-    for (const id of ids) {
-      const repo = repositories.find(repo => repo.id === id)
-      if (!repo?.localPath && !repo?.workspaceParent) throw new Error(`仓库 ${id} 需要配置已有本地仓库路径或工作区父目录才能使用 worktree。`)
+  const chats = (config.chats ?? []) as { chatId: string; name?: string; repositories?: string; primaryRepository?: string }[]
+  const entries = [
+    ...chats.map(chat => ({ label: `飞书群「${chat.name || chat.chatId}」`, repositories: chat.repositories ?? '', primaryRepository: chat.primaryRepository ?? '' })),
+    { label: '飞书私聊', repositories: String(config.directRepositories ?? ''), primaryRepository: String(config.directPrimaryRepository ?? '') },
+  ]
+  for (const entry of entries) {
+    for (const id of repositoryIds(entry.repositories)) {
+      if (!repositories.some(repo => repo.id === id))
+        throw new Error(`${entry.label}绑定的仓库标识 ${id} 不存在；请先在 Git 仓库中添加，或移除该绑定。`)
     }
   }
-  for (const binding of [...chats.map(chat => chat.repositories ?? ''), String(config.directRepositories ?? '')]) {
-    for (const id of repositoryIds(binding)) if (!repositories.some(repo => repo.id === id)) throw new Error(`仓库标识 ${id} 不存在；请先在 Git 仓库中添加，或移除该绑定。`)
+  for (const entry of entries) {
+    if (!entry.primaryRepository) continue
+    const ids = repositoryIds(entry.repositories)
+    if (!ids.includes(entry.primaryRepository)) throw new Error(`${entry.label}的主仓库必须是已绑定的仓库。`)
+    for (const id of ids) {
+      const repo = repositories.find(repo => repo.id === id)!
+      if (!repo.localPath && !repo.workspaceParent) throw new Error(`仓库 ${id} 需要配置已有本地仓库路径或工作区父目录才能使用 worktree。`)
+    }
   }
   const legacy = settings.sources.github
   if (legacy?.enabled && settings.sources.git?.enabled && repositories.some(repo => repo.provider === 'github'

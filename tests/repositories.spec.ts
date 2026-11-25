@@ -84,8 +84,13 @@ describe('repository bindings', () => {
     const config = settings()
     validateRepositoryBindings(config)
     config.sources.git!.config.repositories = [first]
-    expect(() => validateRepositoryBindings(config)).toThrow('backend')
-    config.sources.git!.config.repositories = [first, second]
+    expect(() => validateRepositoryBindings(config)).toThrow('飞书群「oc_team」绑定的仓库标识 backend 不存在')
+    // Report missing repository before worktree path checks even when a primaryRepository is configured.
+    config.sources.feishu!.config.chats = [{ chatId: 'oc_team', listen: 'all', repositories: 'frontend', primaryRepository: 'frontend' }]
+    config.sources.feishu!.config.directRepositories = 'frontend,backend'
+    config.sources.feishu!.config.directPrimaryRepository = 'backend'
+    expect(() => validateRepositoryBindings(config)).toThrow('飞书私聊绑定的仓库标识 backend 不存在')
+    config.sources.git!.config.repositories = [{ ...first, localPath: '/tmp/frontend' }, { ...second, localPath: '/tmp/backend' }]
     config.sources.github = { enabled: true, config: { repository: 'acme/frontend' } }
     expect(() => validateRepositoryBindings(config)).toThrow('重复派工')
   })
