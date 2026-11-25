@@ -350,7 +350,7 @@ describe('a worker whose work runs in the background', () => {
     return one
   }
   it('frees the slot of a worker that reports blocked, stopping its subagents and leaving its jobs, whose end wakes no one', async () => {
-    await handsOff({ state: 'blocked', summary: 'Which color?' })
+    await handsOff({ state: 'blocked', summary: 'Which color?', human_action: 'Which color?' })
   })
   it('keeps a failed worker from being woken by a job it left, and from failing again', async () => {
     await handsOff({ state: 'failed', summary: 'The build broke.' })
@@ -364,7 +364,7 @@ describe('a worker whose work runs in the background', () => {
   it('leaves the background work of a turn a person started in the worker\'s Session after a hand-off to that turn', async () => {
     const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
     const agent = h.agents.get(one.sessionId)!
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which color?' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which color?', human_action: 'Which color?' }); await h.runtime.idle()
     // A person answers in the worker's Session, which the ticket does not record; the turn starts a subagent and a job.
     await new Promise(resolve => setTimeout(resolve, 5))
     h.ctx.emit('agent/inbox/claimed', { agent, message: { id: 'typed', role: 'user', content: [], source: { kind: 'user' } }, turn: 2 } as never)
@@ -556,10 +556,10 @@ describe('a worker whose work runs in the background', () => {
     expect(reports()).toBe(reported)
   })
   it('collects the end of a job left to a person until dsh-superagent stopped its workers', async () => {
-    const one = await handsOff({ state: 'blocked', summary: 'Which color?' })
+    const one = await handsOff({ state: 'blocked', summary: 'Which color?', human_action: 'Which color?' })
     const agent = h.agents.get(one.sessionId)!
     const server = h.jobs.run(one.sessionId, 'pnpm dev')
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which size?' }); await h.runtime.idle()
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which size?', human_action: 'Which size?' }); await h.runtime.idle()
     idle(one.sessionId)
     await vi.waitFor(() => expect(h.jobs.service.wait).toHaveBeenCalledWith(server, expect.any(Number), one.sessionId, expect.anything()))
     // The server ends while the host stops, after it cancelled the workers.
@@ -665,7 +665,7 @@ describe('what a worker read', () => {
     // The retry steers the message in while the worker writes that nothing is left, and no step takes it before.
     await retried(async () => {
       expect(ticket().undelivered).toEqual([])
-      await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })
+      await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do', public_reply: 'Nothing to do' })
     })
     expect(h.candidates()).toContain(thanks.id)
   })
@@ -727,7 +727,7 @@ describe('what a worker read', () => {
     receiveAndRoute(h.runtime, thanks); await h.runtime.idle()
     h.step(one.sessionId)
     await later()
-    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })
+    await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do', public_reply: 'Nothing to do' })
     await h.runtime.pump(); await h.runtime.idle()
     expect(h.candidates()).not.toContain(thanks.id)
   })
@@ -742,7 +742,7 @@ describe('what a worker read', () => {
     await retried(async () => {
       expect(h.agents.get(one.sessionId)!.status).toBe('running')
       vi.setSystemTime(Date.now() + 1000)
-      await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do' })
+      await h.runTool(one.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'Nothing to do', public_reply: 'Nothing to do' })
     })
     expect(h.candidates()).not.toContain(thanks.id)
   })
@@ -801,7 +801,7 @@ it('tells a passing failure of the provider or the network from one that a later
 })
 it('reports a worker waiting when its turn ends after a person answered its blocked report', async () => {
   const one = await h.acceptedTicket(feishu('1', '@bot 修一'))
-  await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which color?' })
+  await h.runTool(one.sessionId, 'orchestrator_report', { state: 'blocked', summary: 'Which color?', human_action: 'Which color?' })
   // The person answers later than the report.
   await new Promise(resolve => setTimeout(resolve, 5))
   receiveAndRoute(h.runtime, feishu('2', '蓝色', { mentions: [], root_id: 'om_1' })); await h.runtime.idle()

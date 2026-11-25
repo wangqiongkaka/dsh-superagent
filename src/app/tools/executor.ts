@@ -81,10 +81,10 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
         state: z.enum(['progress', 'ready', 'blocked', 'failed', 'dropped']),
         summary: z.string().min(1),
         public_reply: z.string().max(REPLY_CHARS).refine(text => !!text.trim()).optional()
-          .describe(`Required for a ready result or explicit answer (reply_to_trigger_id) whose person wrote in Feishu: the complete final Markdown, sent unchanged and never summarized again. State the conclusion, key reasoning and evidence, what was verified and what was not, limits or risks, and the next step, with real PR links. No credentials, local paths, raw logs or test commands. At most ${REPLY_CHARS} characters.`),
+          .describe(`Required for a ready result, a dropped report of a requested ticket, or an explicit answer (reply_to_trigger_id) whose person wrote in Feishu; for dropped, say why nothing more will be done and what a person could add to have it handled: the complete final Markdown, sent unchanged and never summarized again. State the conclusion, key reasoning and evidence, what was verified and what was not, limits or risks, and the next step, with real PR links. No credentials, local paths, raw logs or test commands. At most ${REPLY_CHARS} characters.`),
         failure_reason: z.string().trim().min(1).max(240).optional().describe('For failed only: one short reason safe to post to the original request. Exclude credentials, paths, private data and raw logs.'),
         human_action: z.string().max(REPLY_CHARS).refine(text => !!text.trim()).nullish()
-          .describe(`Full question as the recipient should see it: the background, what each option means and how they differ, the recommendation and why, and what to confirm. Sent unchanged to Feishu, at most ${REPLY_CHARS} characters. Omit to keep the pending question, null to clear it.`),
+          .describe(`Full question as the recipient should see it: the background, what each option means and how they differ, the recommendation and why, and what to confirm. Sent unchanged to Feishu, at most ${REPLY_CHARS} characters. A blocked report whose person wrote in Feishu needs one, new or still pending: the concrete decision or action a person must take. Omit to keep the pending question, null to clear it.`),
         human_options: z.array(z.object({ label: z.string().trim().min(1).max(40), recommended: z.boolean().optional() }).strict())
           .min(2).max(4).optional()
           .describe('With human_action, for a single-choice question: 2-4 short option labels. Feishu may show them as buttons plus a free-text answer; human_action must still describe every option.'),
@@ -118,7 +118,7 @@ export function executorTools(host: ExecutorToolsHost, ticket: Ticket): Tool[] {
             ...(args.reply_to_trigger_id ? { answers: args.reply_to_trigger_id } : {}) }
           const updated = host.engine.report(ticketId, report)
           const sourceReply = report.question && updated.attention ? host.store.replyStatus(key('attention-reply', updated.attention.id))
-            : report.answers || report.state === 'ready' ? host.store.replyStatus(reportReplyId(updated, report.answers)) : undefined
+            : report.answers || report.state === 'ready' || report.state === 'dropped' ? host.store.replyStatus(reportReplyId(updated, report.answers)) : undefined
           const relay = reportRelay(updated, report, sourceReply)
           if (relay) host.sessions.relay(relay.id, relay.text)
           const notification = relay ? 'orchestrator' : 'internal_only'

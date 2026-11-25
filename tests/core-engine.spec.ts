@@ -1096,6 +1096,125 @@ describe('automatic input', () => {
   })
 })
 describe('replies', () => {
+  const replies = (h: ReturnType<typeof harness>) => h.outbox.filter(message => message.kind === 'reply')
+  /** An explicit request on a Thread of its own, waiting in its Eval. */
+  const explicit = (h: ReturnType<typeof harness>, id: string, text = `message ${id}`) => {
+    h.engine.receive(trigger(id, { text, threads: [{ source: 'chat', id: `t${id}` }], channel: { source: 'chat', thread: `t${id}`, address: { message: id } } }))
+    h.pump()
+    return h.requests.at(-1)!
+  }
+  it('tells the original request once when a person stops its ticket', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.engine.stopTicket(ticketId, 'private reason'); h.engine.stopTicket(ticketId)
+    expect(replies(h)).toEqual([expect.objectContaining({ channel: trigger('1').channel, ticketId,
+      text: `Ticket ${ticketId.slice(0, 12)} was stopped by a person and will not continue. Send a new request if it is still needed.` })])
+  })
+  it('tells a stop by message once, also when the stop is routed again, and keeps a follow-up routed to the ticket silent', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    receiveAndRoute(h, trigger('2'))
+    expect(replies(h)).toEqual([])
+    for (const id of ['3', '4']) {
+      h.engine.receive(trigger(id))
+      h.engine.decide(id, { kind: 'stop', ticketId, reason: 'stop it' })
+    }
+    expect(replies(h).map(message => message.text)).toEqual([expect.stringContaining('was stopped by a person')])
+  })
+  it('replies to a message a revoked ticket let go once its new Eval of an explicit request takes nothing on, and keeps inferred ones silent', () => {
+    for (const [actor, expected] of [[member, 1], [guest, 0]] as const) {
+      const h = harness()
+      const ticketId = accepted(h).ticketId!
+      h.engine.report(ticketId, { state: 'ready', summary: 'Done' }); h.settle()
+      h.setVersion('revoked')
+      h.tick(5); receiveAndRoute(h, trigger('2', { actor })); h.pump()
+      const candidate = h.requests.at(-1)!
+      expect(candidate.triggers.map(item => item.id)).toEqual(['2'])
+      h.decide(candidate, { kind: 'ignore', reason: 'not new work' })
+      expect(replies(h).filter(message => message.channel.address.message === '2')).toHaveLength(expected)
+    }
+  })
+  it('refuses a blocked report to a Feishu requester that leaves no question open, and keeps a pending one', () => {
+    const h = harness()
+    receiveAndRoute(h, trigger('1', { channel: { source: 'feishu', thread: 't1', address: { message: '1' } } })); h.pump()
+    const ticketId = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'r', acknowledgement: 'ok' }).ticketId!
+    h.settle()
+    expect(() => h.engine.report(ticketId, { state: 'blocked', summary: 'stuck' })).toThrow(new UserError('blockedNeedsAction'))
+    h.engine.report(ticketId, { state: 'blocked', summary: 'stuck', question: 'Please merge PR #1.' })
+    expect(h.engine.report(ticketId, { state: 'blocked', summary: 'still stuck' }).attention?.question).toBe('Please merge PR #1.')
+    expect(() => h.engine.report(ticketId, { state: 'blocked', summary: 'stuck', question: null })).toThrow(new UserError('blockedNeedsAction'))
+    // Once the person wrote back, the old question may be answered: a new block needs a new question.
+    h.tick(1); receiveAndRoute(h, trigger('2', { channel: { source: 'feishu', thread: 't1', address: { message: '2' } } })); h.settle()
+    expect(() => h.engine.report(ticketId, { state: 'blocked', summary: 'stuck again' })).toThrow(new UserError('blockedNeedsAction'))
+    h.engine.report(ticketId, { state: 'blocked', summary: 'stuck again', question: 'Please approve the review.' })
+    expect(replies(h).map(message => message.text)).toEqual(['Please merge PR #1.', 'Please approve the review.'])
+  })
+  it('posts why a requested Feishu ticket was dropped, and keeps one taken on unasked quiet', () => {
+    const feishu = { channel: { source: 'feishu', thread: 't1', address: { message: '1' } } }
+    const requested = harness()
+    receiveAndRoute(requested, trigger('1', feishu)); requested.pump()
+    const ticketId = requested.decide(requested.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'r', acknowledgement: 'ok' }).ticketId!
+    requested.settle()
+    expect(() => requested.engine.report(ticketId, { state: 'dropped', summary: 'not reproduced' })).toThrow(new UserError('publicReplyRequired'))
+    requested.engine.report(ticketId, { state: 'dropped', summary: 'not reproduced', publicReply: 'Not reproduced in 20 tries; send a screenshot.' })
+    expect(replies(requested).map(message => message.text)).toEqual(['Not reproduced in 20 tries; send a screenshot.'])
+    expect(requested.repo.tickets.get(ticketId)!.ended).toMatchObject({ outcome: 'dropped' })
+    const unasked = harness({ gate: () => ({ admissible: true, strength: 'inferred', basis: { via: 'followup' } }) })
+    receiveAndRoute(unasked, trigger('1', feishu)); unasked.pump()
+    const quiet = unasked.decide(unasked.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'r', rules: ['r1'] }).ticketId!
+    unasked.settle()
+    unasked.engine.report(quiet, { state: 'dropped', summary: 'direction unsettled' })
+    expect(replies(unasked)).toEqual([])
+  })
+  it('tells the person whose message waits once when its delivery keeps failing for five minutes', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    receiveAndRoute(h, trigger('2'))
+    const fail = () => h.engine.deliveryFailed(ticketId, runningAssignment(h.repo.tickets.get(ticketId)!)!.id, 'secret session error')
+    fail(); h.tick(299); fail()
+    expect(replies(h)).toEqual([])
+    h.tick(2); fail(); h.tick(60); fail()
+    expect(replies(h)).toEqual([expect.objectContaining({ channel: trigger('2').channel,
+      text: `Your message has not reached the worker of ticket ${ticketId.slice(0, 12)} yet. Delivery is still being retried, and work continues once it arrives.` })])
+    // A delivery that goes through starts the next run of failures afresh.
+    h.settle(); receiveAndRoute(h, trigger('3')); fail()
+    expect(h.repo.tickets.get(ticketId)!.delivery).toMatchObject({ since: h.repo.tickets.get(ticketId)!.delivery!.at })
+  })
+  it('stays silent when the executor ends its ticket', () => {
+    const h = harness()
+    const ticketId = accepted(h).ticketId!
+    h.engine.report(ticketId, { state: 'dropped', summary: 'nothing to do' })
+    expect(replies(h)).toEqual([])
+  })
+  it('tells the sender of an explicit request it did not take on, in their words or the main Session\'s', () => {
+    const h = harness()
+    h.decide(explicit(h, '5', '帮我看看'), { kind: 'ignore', reason: 'chat' })
+    h.decide(explicit(h, '6'), { kind: 'ignore', reason: 'no repository', reply: 'Ask an operator to bind a repository to this chat.' })
+    h.decide(explicit(h, '7'), { kind: 'stop', ticketId: 'missing', reason: 'stop it' })
+    expect(replies(h).map(({ channel, text }) => [channel.address.message, text])).toEqual([
+      ['5', '这条消息未被接单为任务。如需处理，请明确说明要做的改动或问题。'],
+      ['6', 'Ask an operator to bind a repository to this chat.'],
+      ['7', 'No open ticket was found to stop; nothing was changed.'],
+    ])
+  })
+  it('does not repeat an answer the main Session already sent before ignoring', () => {
+    const h = harness()
+    const candidate = explicit(h, '5')
+    h.engine.reply({ purpose: 'answer', triggerId: '5', text: 'Which repository?' })
+    h.decide(candidate, { kind: 'ignore', reason: 'asked for the repository' })
+    expect(replies(h).map(message => message.text)).toEqual(['Which repository?'])
+  })
+  it('tells an explicit sender when the assessment times out', () => {
+    const h = harness()
+    explicit(h, '5')
+    for (let expiry = 0; expiry < 3; expiry++) { h.engine.candidateDelivered(h.requests.at(-1)!.evalId); h.tick(61); h.pump() }
+    expect(replies(h).map(message => message.text)).toEqual(['This request could not be assessed and was not taken on. Please send it again later.'])
+  })
+  it('keeps inferred candidates silent', () => {
+    const h = harness({ gate: () => ({ admissible: true, strength: 'inferred', basis: { via: 'followup' } }) })
+    h.decide(explicit(h, '5'), { kind: 'ignore', reason: 'chat', reply: 'not for you' })
+    expect(replies(h)).toEqual([])
+  })
   it('only publishes a failure to its original request and drops unsafe details', () => {
     const h = harness()
     const ticketId = accepted(h).ticketId!

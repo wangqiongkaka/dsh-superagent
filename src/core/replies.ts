@@ -27,6 +27,17 @@ export function reportReplyId(ticket: Ticket, answerTo?: string): string {
 /** The options a Channel may offer to answer the question, when it has any. */
 const choices = (attention: Attention): Pick<OutboundMessage, 'choices'> =>
   attention.options?.length ? { choices: { attentionId: attention.id, options: attention.options } } : {}
+/** Whether host-written text for a person who wrote `text` should be Chinese. */
+const chinese = (text: string): boolean => /\p{Script=Han}/u.test(text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text)
+/** The answer to a person's message that reached no ticket, one per message, which a later decline of it does not repeat. */
+const unticketedAnswerId = (triggerId: string): string => key('answer', triggerId)
+/** Why an explicit request started no work, as the host tells its sender when the main Session wrote nothing for them. */
+export type Declined = 'ignore' | 'stopUnknown' | 'unavailable'
+const DECLINED: Record<Declined, { zh: string; en: string }> = {
+  ignore: { zh: '这条消息未被接单为任务。如需处理，请明确说明要做的改动或问题。', en: 'This message was not taken on as a task. To have it handled, state the change or question explicitly.' },
+  stopUnknown: { zh: '没有找到可停止的进行中工单，未做任何操作。', en: 'No open ticket was found to stop; nothing was changed.' },
+  unavailable: { zh: '这条请求暂未能完成研判，未接单。请稍后重新发送。', en: 'This request could not be assessed and was not taken on. Please send it again later.' },
+}
 
 /**
  * Replies writes the Engine's messages to Channels through the Outbox port: an acknowledgement, the answer to a person's
@@ -39,7 +50,8 @@ export class Replies extends EnginePart {
    * Queue a message for the Channel its purpose names: an acknowledgement or an answer goes where that person's message was
    * written, attention where the message that raised the question was (or to the ticket's starting conversation), and a
    * result to the conversation where the ticket started (`result` is allowed only for a ticket in `ready`, `completed`,
-   * `merged`, or `dropped`). Each message is queued at most once (idempotent). An acknowledgement, even one already queued,
+   * `merged`, or `dropped`). Each message is queued at most once (idempotent), and an answer to a message that reached no
+   * ticket at most once per message, which tells a later decline of it to stay silent. An acknowledgement, even one already queued,
    * records that the ticket's worker took the message up.
    * @throws UserError when the ticket or trigger is unknown or the purpose's rule refuses it, such as a result of a ticket
    * that is not ready, completed, merged, or dropped.
@@ -58,16 +70,44 @@ export class Replies extends EnginePart {
   reportFailure(ticket: Ticket, assignmentId: string, reason?: string | { zh: string; en: string }): void {
     const origin = this.source(ticket)
     if (!origin?.human || !origin.channel) return
-    const chinese = /\p{Script=Han}/u.test(origin.text) && !/[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(origin.text)
-    const detail = typeof reason === 'string' ? reason.trim() : reason?.[chinese ? 'zh' : 'en']
+    const zh = chinese(origin.text)
+    const detail = typeof reason === 'string' ? reason.trim() : reason?.[zh ? 'zh' : 'en']
     // Public details are deliberately separate from the internal summary. Drop credential-like content even in that field.
     const sensitive = /[\r\n]|https?:\/\/|(?:^|\s)(?:[a-z]:[\\/]|~?\/)\S|\bbearer\b|(?:authorization|password|secret|token|api[-_ ]?key)\s*[:=]|\b(?:gh[pousr]_|github_pat_|sk-|xox[bp]-)\S|-----BEGIN /i
     const safe = detail && !sensitive.test(detail) ? detail.slice(0, 72).replace(/[`<>@]/g, '').trim() : ''
     const id = ticket.id.slice(0, 12)
-    const text = chinese
+    const text = zh
       ? `工单 ${id} 执行失败。${safe || '执行器未能完成任务。'} 处理后可重试。`
       : `Ticket ${id} failed. ${safe || 'The executor could not finish the task.'} You can retry after resolving the issue.`
     this.options.outbox.send({ id: key('ticket-failure', assignmentId, text), channel: origin.channel, text, kind: 'reply', ticketId: ticket.id })
+  }
+  /** Tell the original human request that a person stopped its ticket; a stopped ticket never resumes, so once per ticket. */
+  reportStopped(ticket: Ticket): void {
+    const origin = this.source(ticket)
+    if (!origin?.human || !origin.channel) return
+    const id = ticket.id.slice(0, 12)
+    const text = chinese(origin.text) ? `工单 ${id} 已被人工停止，不再继续处理。如仍需处理，请重新发起请求。`
+      : `Ticket ${id} was stopped by a person and will not continue. Send a new request if it is still needed.`
+    this.options.outbox.send({ id: key('ticket-stopped', ticket.id), channel: origin.channel, text, kind: 'reply', ticketId: ticket.id })
+  }
+  /**
+   * Tell the sender of an explicit request that it started no work: the main Session's own sentence, else the host's note
+   * for `why`. Nothing more goes out when the main Session already answered that message (see `unticketedAnswerId`).
+   */
+  reportDeclined(decisionId: string, triggerId: string, why: Declined, reply?: string): void {
+    const trigger = this.repo.triggers.get(triggerId)
+    if (!trigger?.human || !trigger.channel || this.options.outbox.status(unticketedAnswerId(triggerId))) return
+    const text = reply?.trim() || DECLINED[why][chinese(trigger.text) ? 'zh' : 'en']
+    this.options.outbox.send({ id: key('declined', decisionId), channel: trigger.channel, text, kind: 'reply' })
+  }
+  /** Tell a person once that their message has not reached the ticket's worker yet while delivery keeps being retried. */
+  reportDeliveryStalled(ticket: Ticket, inputId: string, triggerId: string): void {
+    const trigger = this.repo.triggers.get(triggerId)
+    if (!trigger?.human || !trigger.channel) return
+    const id = ticket.id.slice(0, 12)
+    const text = chinese(trigger.text) ? `你的消息暂未送达工单 ${id} 的执行器，系统仍在自动重试，送达后会继续处理。`
+      : `Your message has not reached the worker of ticket ${id} yet. Delivery is still being retried, and work continues once it arrives.`
+    this.options.outbox.send({ id: key('delivery-stalled', ticket.id, inputId), channel: trigger.channel, text, kind: 'reply', ticketId: ticket.id })
   }
   /** Send the executor's complete question directly to its Feishu recipient. */
   reportAttention(ticket: Ticket, attention: Attention): void {
@@ -126,7 +166,8 @@ export class Replies extends EnginePart {
       const status = this.options.outbox.status(id)
       if (status) return { id, status, reused: true }
     }
-    const id = attention ? key('attention-reply', attention.id) : key('reply', trigger?.id ?? ticket?.id ?? '', request.text)
+    const id = attention ? key('attention-reply', attention.id) : request.purpose === 'answer' && !ticket ? unticketedAnswerId(trigger!.id)
+      : key('reply', trigger?.id ?? ticket?.id ?? '', request.text)
     const existing = this.options.outbox.status(id)
     const ready = !ticket || !trigger || ticket.answers?.includes(trigger.id)
     if (request.purpose === 'answer' && !ready && !existing) throw new UserError('noAnswer')

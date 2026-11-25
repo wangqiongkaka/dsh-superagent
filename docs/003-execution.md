@@ -135,6 +135,12 @@ A passing failure of the model provider or the network, an HTTP 408, 429 or 5xx 
 
 When a failure is recorded, the Outbox queues a short reply to the original human request, including its Feishu topic when applicable. Automatic retries stay internal until they fail. The public reply uses a safe failure category or the worker's separate `failure_reason`; the internal diagnostic summary stays on the Ticket.
 
+When a person stops a Ticket, from the panel or by a message, the Outbox likewise queues one short reply to its original human request saying it stopped. The stop reason stays internal.
+
+A `blocked` Report for a Ticket whose person wrote in Feishu must leave a question open, new in `human_action` or still pending, naming the decision or action a person must take; the host posts it to that topic, and a `blocked` Report without one is refused. When delivering a person's message to the worker keeps failing for five minutes, its sender is told once that delivery is still being retried; the error stays on the Ticket.
+
+A `dropped` Report for a Ticket a person explicitly asked for in Feishu needs `public_reply`, posted unchanged: why nothing more will be done and what would let it be handled. A Ticket taken on unasked still closes quietly, as does one that ends as the close of the Threads it follows, whose own notice tells it.
+
 Once failed, CI and bot messages are recorded on it, but they are not delivered and do not wake the Session.
 
 Its tools stay available, so a person can continue in the Session directly.

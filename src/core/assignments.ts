@@ -7,6 +7,9 @@ import { EnginePart, type EngineOptions } from './part.ts'
 import type { Replies } from './replies.ts'
 import { automatic, type Tickets } from './tickets.ts'
 
+/** How long an Input's delivery keeps failing before the person whose message waits is told. */
+export const DELIVERY_STALLED_MS = 5 * 60_000
+
 /** What an Assignment reports: a worker's report, or the Executor's own (`waiting` after an idle turn, `failed` after an error). */
 export interface WorkerReport {
   state: ReportState
@@ -78,8 +81,15 @@ export class Assignments extends EnginePart {
   deliveryFailed(ticketId: string, assignmentId: string, error: string): void {
     const ticket = this.running(ticketId, assignmentId)
     if (!ticket) return
-    ticket.delivery = { error: error.slice(0, 300), at: this.now() }
+    const at = this.now()
+    const since = ticket.delivery?.since ?? ticket.delivery?.at ?? at
+    ticket.delivery = { error: error.slice(0, 300), at, since }
     this.repo.tickets.save(ticket)
+    // Retries stay silent until they have failed for a while; then the person whose message waits hears it once.
+    if (Date.parse(at) - Date.parse(since) < DELIVERY_STALLED_MS) return
+    const waiting = ticket.undelivered.map(id => ticket.inputs.find(input => input.id === id))
+      .find(input => input?.kind === 'trigger' && input.human)
+    if (waiting?.kind === 'trigger') this.replies.reportDeliveryStalled(ticket, waiting.id, waiting.triggerId)
   }
   /**
    * Handles a running assignment interrupted by a host restart: restarts it with a recovery note unless its latest report is
@@ -100,7 +110,7 @@ export class Assignments extends EnginePart {
    * Records a worker status report on an open ticket's current assignment, updating `attention`, `answers`, held automated
    * inputs, and ending the ticket when `dropped` or when `ready` and not waiting on followed threads (`followsDone`).
    * @throws UserError for an unknown or ended ticket, an ended assignment, a question combined with a ready result or answer,
-   * or a question/answer referencing a non-human or unreached trigger.
+   * a question/answer referencing a non-human or unreached trigger, or a blocked report for a Feishu requester without an open question.
    */
   report(ticketId: string, report: WorkerReport): Ticket {
     const ticket = this.require(ticketId)
@@ -113,8 +123,12 @@ export class Assignments extends EnginePart {
     }
     if (report.askedBy && !person(report.askedBy, true)) throw new UserError('notAsker')
     if (report.answers && !person(report.answers, false)) throw new UserError('notAnswerable')
-    // Feishu gets the executor's own complete text, never the main Session's rewrite of a truncated summary.
-    if ((report.answers || report.state === 'ready') && !report.publicReply?.trim() && this.replies.publicChannel(ticket, report.answers)) {
+    // Feishu gets the executor's own complete text, never the main Session's rewrite of a truncated summary. A dropped ticket
+    // tells the person who asked for it why, unless it ends as the close of its followed Threads, whose own notice tells it;
+    // one taken on unasked stays as quiet as its rules keep it.
+    const tells = !!report.answers || report.state === 'ready'
+      || (report.state === 'dropped' && ticket.mandate.strength === 'explicit' && !this.tickets.followsDone(ticket))
+    if (tells && !report.publicReply?.trim() && this.replies.publicChannel(ticket, report.answers)) {
       throw new UserError('publicReplyRequired')
     }
     const assignment = runningAssignment(ticket) ?? latestAssignment(ticket)
@@ -123,21 +137,24 @@ export class Assignments extends EnginePart {
     const at = this.now()
     const previous = ticket.attention
     const options = report.options?.length ? report.options : undefined
-    const ask = (question: string): Attention => ({ id: key('attention', ticketId, question, at, ...options ? [JSON.stringify(options)] : []), question,
+    const ask = (question: string): Attention => ({ id: key('attention', ticketId, question, at, ...options ? [JSON.stringify(options)] : []), question, at,
       ...(report.askedBy ? { triggerId: report.askedBy } : {}), ...(options ? { options } : {}) })
     // The same question with other choices is a new question, so its message goes out again with them; repeated without
     // choices, it keeps the ones it was asked with.
     const same = report.question === previous?.question && (!options || JSON.stringify(options) === JSON.stringify(previous?.options))
     const asked = report.question && !same ? ask(report.question) : previous
     const attention = report.question === null || report.state === 'ready' ? undefined : asked
+    // A Feishu requester waits on a blocked ticket only for what a person must do, which a question still unanswered tells
+    // them: one a person's message came after may be answered already.
+    const unanswered = attention && !ticket.inputs.some(input => input.kind === 'trigger' && input.human && !!attention.at && input.at > attention.at)
+    if (report.state === 'blocked' && !unanswered && this.replies.publicChannel(ticket)) throw new UserError('blockedNeedsAction')
     if (attention) ticket.attention = attention
     else delete ticket.attention
     // A replaced or cleared attention question withdraws any pending unsent reply for the previous question from the outbox.
     if (previous && previous.id !== attention?.id) this.replies.withdrawAttention(previous.id)
     assignment.report = { state: report.state, summary: report.summary, at }
     ticket.updatedAt = at
-    const queued = report.publicReply && (report.answers || report.state === 'ready')
-      && this.replies.reportDelivery(ticket, report.publicReply, report.answers)
+    const queued = report.publicReply && tells && this.replies.reportDelivery(ticket, report.publicReply, report.answers)
     if (report.answers) {
       if (queued && ticket.answers) ticket.answers = ticket.answers.filter(id => id !== report.answers)
       if (!queued && !ticket.answers?.includes(report.answers)) ticket.answers = [...ticket.answers ?? [], report.answers]

@@ -82,6 +82,8 @@ An automated reviewer using an ordinary account counts as a person to the host. 
 
 The main Session routes explicit candidates with `orchestrator_route`. One call can contain several accept, attach, stop or ignore decisions. Each item is processed independently: a refused item or a missing field does not prevent the others from running.
 
+An explicit request that starts no work is answered: when it is ignored, its stop names no open Ticket, or its Eval times out, the host replies to the sender with the main Session's optional `reply` sentence, else a fixed note. It stays silent when the main Session already answered that message. Inferred candidates, and messages routed to a Ticket, get no such reply.
+
 An inferred candidate normally needs a full assessment. There is one shortcut: if its card clearly touches no enabled rule, such as plain chat or unrelated discussion, the main Session may ignore it directly. The Decision records `ignoredFromCard` to distinguish this from a rule assessment. The main Session reads the enabled rules in its Policy prompt section.
 
 Accepting an inferred candidate always requires an assessment. Direct accept refuses a Trigger that the gate did not admit as explicit.

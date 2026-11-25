@@ -347,7 +347,7 @@ it('accepts silently under a rule that says so, gives the worker the rule proced
   expect(sections.get(`worker-${ticket.id}`)!.text({})).toContain(mandateInstructions({ strength: 'inferred' }))
   expect(await runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `ticket/${ticket.id}/assignment` })).toMatchObject({ text: expect.stringContaining('沉默地复现和修复 (silent-bugfix): Reproduce minimally first; accept silently.') })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: 'x' })).rejects.toThrow('not ready')
-  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'blocked', summary: 'needs a decision' })
+  await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'blocked', summary: 'needs a decision', human_action: 'Which option?' })
   await expect(runTool(runtime.masterId, 'orchestrator_reply', { ticket_id: ticket.id, purpose: 'result', text: 'x' })).rejects.toThrow('not ready')
   // Nothing left for a human: the ticket closes instead of waiting, and the rule's closing sentence can still be delivered.
   await runTool(`worker-${ticket.id}`, 'orchestrator_report', { state: 'dropped', summary: 'too complex; recorded in #123' })
@@ -529,7 +529,7 @@ it('stops a ticket on a person\'s instruction for good, and resumes an ended one
   await expect(route({ kind: 'attach', ticket_id: ticket.id, trigger_id: guest.id })).rejects.toThrow('stopped')
   // A ticket that ended by itself resumes on a person's message on its thread, whoever sent it.
   const other = await acceptedTicket(feishu('20', '@bot 修另一个'))
-  await runTool(other.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'not reproduced' })
+  await runTool(other.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'not reproduced', public_reply: 'not reproduced' })
   expect(runtime.store.tickets.get(other.ticket.id)!.ended).toBeDefined()
   await receive(feishu('21', '我这边还能复现', { mentions: [], root_id: 'om_20', sender_id: 'ou_guest' }))
   await runtime.pump()
@@ -966,7 +966,7 @@ it('reads resources recorded under the pre-vocabulary names', async () => {
 
 it('leaves waiting and blocked assignments alone after a restart and keeps blocked workers paused', async () => {
   const { ticket, sessionId } = await acceptedTicket()
-  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'need credentials' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'blocked', summary: 'need credentials', human_action: 'Please grant the credentials.' })
   runtime.executor.resume()
   expect(runtime.store.tickets.get(ticket.id)!.assignments).toHaveLength(1)
   expect(waitsForPerson(runtime.store.tickets.get(ticket.id)!)).toBe(true)
@@ -1399,7 +1399,7 @@ it('resumes only the selected ended ticket when several tickets share a thread',
   runtime.receive(another); await runtime.idle()
   const result = await route({ kind: 'accept', trigger_id: another.id, title: 'Other', worktree_name: 'other', acknowledgement: '收到。' })
   const secondId = (result.ticket as { ticket_id: string }).ticket_id
-  for (const id of [first.ticket.id, secondId]) await runTool(`worker-${id}`, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
+  for (const id of [first.ticket.id, secondId]) await runTool(`worker-${id}`, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do', public_reply: 'nothing to do' })
   const follow = feishu('32', '还有问题', { mentions: [], root_id: 'om_1' })
   runtime.receive(follow); await runtime.idle()
   expect([first.ticket.id, secondId].every(id => runtime.store.tickets.get(id)!.ended)).toBe(true)
@@ -1411,7 +1411,7 @@ it('resumes only the selected ended ticket when several tickets share a thread',
 
 it('attaches a message to an ended ticket and so resumes it', async () => {
   const { ticket, sessionId } = await acceptedTicket()
-  await runTool(sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do' })
+  await runTool(sessionId, 'orchestrator_report', { state: 'dropped', summary: 'nothing to do', public_reply: 'nothing to do' })
   const other = feishu('40', '@bot 上次那个改动还要改一下', { root_id: undefined })
   await receive(other)
   await route({ kind: 'attach', ticket_id: ticket.id, trigger_id: other.id })
@@ -1645,7 +1645,7 @@ it('restarts a worker that was mid-work when the host stopped with the recovery 
 it('keeps the report of a blocked, failed or ready worker whose turn ends, and relays nothing more', async () => {
   for (const state of ['blocked', 'failed', 'ready'] as const) {
     const { ticket, sessionId } = await acceptedTicket(feishu(String(20 + ['blocked', 'failed', 'ready'].indexOf(state)), `@bot 修 ${state}`, { root_id: undefined }))
-    await runTool(sessionId, 'orchestrator_report', { state, summary: `${state} report`, ...state === 'ready' ? { public_reply: 'ready report' } : {} })
+    await runTool(sessionId, 'orchestrator_report', { state, summary: `${state} report`, ...state === 'ready' ? { public_reply: 'ready report' } : state === 'blocked' ? { human_action: 'Which one?' } : {} })
     const relayed = relays(runtime.masterId).length
     const agent = agents.get(sessionId)! as { status: string }
     agent.status = 'idle'
@@ -2039,7 +2039,7 @@ it('serializes same-topic worktrees across tickets, persists ownership and prote
   runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
   await runtime.pump(); await runtime.idle()
   expect(agents.has(next.sessionId)).toBe(false)
-  await runTool(first.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'done' })
+  await runTool(first.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'done', public_reply: 'done' })
   agents.get(first.sessionId)!.status = 'idle'
   residentChild = true
   runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")
@@ -2066,7 +2066,7 @@ it('serializes same-topic worktrees across tickets, persists ownership and prote
   await route({ kind: 'attach', ticket_id: first.ticket.id, trigger_id: follow.id })
   expect(runtime.store.tickets.get(first.ticket.id)!.assignments.at(-1)!.state).toBe('pending')
   expect(guards.get(first.sessionId)!()).toContain('Worktree is not ready')
-  await runTool(next.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'released' })
+  await runTool(next.sessionId, 'orchestrator_report', { state: 'dropped', summary: 'released', public_reply: 'released' })
   agents.get(next.sessionId)!.status = 'idle'
   await vi.waitFor(async () => {
     runtime.store.db.exec("UPDATE effect SET due = 0 WHERE kind = 'launch'")

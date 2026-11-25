@@ -281,9 +281,10 @@ export type TicketOutcome = 'completed' | 'merged' | 'closed' | 'dropped' | 'sto
 export interface AttentionOption { label: string; recommended?: boolean }
 /**
  * A question for a person; `triggerId` is the human message that raised it, whose conversation it goes back to, and `options`
- * are choices a Channel may offer as buttons, while `question` stays complete without them.
+ * are choices a Channel may offer as buttons, while `question` stays complete without them. `at` is when it was asked; one
+ * recorded before that has none.
  */
-export interface Attention { id: string; question: string; triggerId?: string; options?: AttentionOption[] }
+export interface Attention { id: string; question: string; triggerId?: string; options?: AttentionOption[]; at?: string }
 /** Ticket aggregate: an authorized work item with its assignments, channels, thread bindings, and inputs. */
 export interface Ticket {
   id: string
@@ -314,8 +315,8 @@ export interface Ticket {
   origin: { triggerId: string; triggerIds: string[] }
   /** What its Executor chose: its short name, directory and assignment text. */
   execution?: Execution
-  /** The latest failed delivery of an Input to its worker, until a delivery succeeds. */
-  delivery?: { error: string; at: string }
+  /** The latest failed delivery of an Input to its worker, and `since` the first of its run, until a delivery succeeds. */
+  delivery?: { error: string; at: string; since?: string }
 }
 /**
  * A Thread a ticket follows, by its key: `own` when the ticket opened it, such as its own pull request, and when and how it
