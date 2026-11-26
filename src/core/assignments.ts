@@ -39,14 +39,22 @@ const RECOVERY_NOTE = 'The host restarted during this ticket. Inspect the curren
 export class Assignments extends EnginePart {
   constructor(options: EngineOptions, private readonly tickets: Tickets, private readonly replies: Replies) { super(options) }
 
-  /** Marks a non-ended assignment running, queues delivery of waiting undelivered inputs on an open ticket, and emits `assignment.started`. */
+  /** Marks a non-ended assignment running, notifies the original requester when recovering from a failure or block, queues waiting undelivered inputs on an open ticket, and emits `assignment.started`. */
   started(ticketId: string, assignmentId: string): void {
     const ticket = this.require(ticketId)
-    const assignment = ticket.assignments.find(item => item.id === assignmentId)
+    const index = ticket.assignments.findIndex(item => item.id === assignmentId)
+    const assignment = index >= 0 ? ticket.assignments[index] : undefined
     if (!assignment || assignment.state === 'ended') return
+    const firstStart = assignment.state === 'pending'
+    const previous = index > 0 ? ticket.assignments[index - 1] : undefined
+    const recovered = firstStart && (
+      assignment.report?.state === 'failed'
+      || (previous?.endedReason === 'retried' && (previous.report?.state === 'failed' || previous.report?.state === 'blocked'))
+    )
     assignment.state = 'running'; assignment.startedAt ??= this.now()
     ticket.updatedAt = this.now()
     this.repo.tickets.save(ticket)
+    if (liveTicket(ticket) && recovered) this.replies.reportRecovered(ticket, assignment.id)
     if (liveTicket(ticket) && ticket.undelivered.length) this.options.executor.deliver(ticket, assignment)
     this.emit('assignment.started', { ticketId, assignmentId })
   }
@@ -59,11 +67,16 @@ export class Assignments extends EnginePart {
     if (!ticket) return
     ticket.undelivered = ticket.undelivered.filter(id => !inputIds.includes(id)); ticket.updatedAt = this.now()
     runningAssignment(ticket)!.deliveredAt = ticket.updatedAt
+    const humanDelivered: { inputId: string; triggerId: string }[] = []
     for (const input of ticket.inputs) {
-      if (input.kind === 'trigger' && inputIds.includes(input.id)) { input.readAt ??= null; input.deliveredTo = assignmentId }
+      if (input.kind === 'trigger' && inputIds.includes(input.id)) {
+        input.readAt ??= null; input.deliveredTo = assignmentId
+        if (input.human) humanDelivered.push({ inputId: input.id, triggerId: input.triggerId })
+      }
     }
     delete ticket.delivery
     this.repo.tickets.save(ticket)
+    for (const item of humanDelivered) this.replies.reportDeliveryRecovered(ticket, item.inputId, item.triggerId)
   }
   /** Records when the worker's Session of an open ticket took `inputIds` into a step, from which its model reads them. */
   read(ticketId: string, inputIds: string[]): void {

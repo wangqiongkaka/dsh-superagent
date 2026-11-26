@@ -1690,6 +1690,48 @@ it('publishes the worker\'s separate failure reason and keeps its internal summa
   expect(replies.at(-1)!.join(' ')).not.toContain('private internal logs')
 })
 
+it('sends a recovery reply to the original Feishu topic when a failed ticket resumes and when a stalled delivery arrives', async () => {
+  const { ticket, sessionId } = await acceptedTicket(feishu('3', '@bot 修回归', { root_id: 'om_1' }))
+  await runTool(sessionId, 'orchestrator_report', { state: 'failed', summary: 'workspace dirty', failure_reason: '工作区准备失败。' })
+  await runtime.idle()
+  runtime.engine.retryTicket(ticket.id)
+  await runtime.idle()
+  const larkReplies = () => vi.mocked(Commands.prototype.lark).mock.calls.map(([args]) => args).filter(args => args[1] === '+messages-reply')
+  expect(larkReplies().filter(args => args.some(arg => arg.includes('已恢复执行')))).toEqual([
+    expect.arrayContaining(['--message-id', 'om_3', '--reply-in-thread', expect.stringContaining(`工单 ${ticket.id.slice(0, 12)} 已恢复执行`)]),
+  ])
+  // After a stalled-delivery notice has been sent to Feishu, a successful delivery follows up once with an arrival reply.
+  const follow = feishu('4', '@bot 顺便看下日志', { root_id: 'om_1' })
+  runtime.receive(follow)
+  await runtime.idle()
+  const original = controller.resolveAgent.getMockImplementation() as (id: string) => Promise<unknown>
+  controller.resolveAgent.mockImplementation(async (id: string) => {
+    if (String(id) === sessionId) throw new Error('temporary session outage')
+    return original(id)
+  })
+  const start = Date.now()
+  vi.useFakeTimers({ toFake: ['Date'], now: start })
+  try {
+    runtime.engine.attach(ticket.id, follow.id)
+    const runningId = runtime.store.tickets.get(ticket.id)!.assignments.at(-1)!.id
+    runtime.engine.deliveryFailed(ticket.id, runningId, 'temporary session outage')
+    vi.setSystemTime(start + 5 * 60_000 + 1000)
+    runtime.engine.deliveryFailed(ticket.id, runningId, 'still failing')
+    await runtime.sendReplies()
+    expect(larkReplies().some(args => args.some(arg => arg.includes('暂未送达')))).toBe(true)
+    controller.resolveAgent.mockImplementation(original)
+    const inputId = runtime.store.tickets.get(ticket.id)!.inputs.find(input => input.kind === 'trigger' && input.triggerId === follow.id)!.id
+    runtime.engine.inputsDelivered(ticket.id, runningId, [inputId])
+    await runtime.sendReplies()
+  } finally {
+    controller.resolveAgent.mockImplementation(original)
+    vi.useRealTimers()
+  }
+  expect(larkReplies().filter(args => args.some(arg => arg.includes('已送达工单')))).toEqual([
+    expect.arrayContaining(['--message-id', 'om_4', '--reply-in-thread', expect.stringContaining(`你的消息已送达工单 ${ticket.id.slice(0, 12)} 的执行器`)]),
+  ])
+})
+
 it('refuses the main Session a bash command that runs sleep and a long job wait, as reports arrive by themselves, and no worker', async () => {
   const bash = (command: string) => ({ name: 'bash', arguments: { command, description: 'x' } })
   const main = guards.get(runtime.masterId)!

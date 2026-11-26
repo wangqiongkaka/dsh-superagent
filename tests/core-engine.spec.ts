@@ -1176,9 +1176,15 @@ describe('replies', () => {
     h.tick(2); fail(); h.tick(60); fail()
     expect(replies(h)).toEqual([expect.objectContaining({ channel: trigger('2').channel,
       text: `Your message has not reached the worker of ticket ${ticketId.slice(0, 12)} yet. Delivery is still being retried, and work continues once it arrives.` })])
-    // A delivery that goes through starts the next run of failures afresh.
-    h.settle(); receiveAndRoute(h, trigger('3')); fail()
+    // A delivery that goes through tells the waiting person once and starts the next run of failures afresh.
+    h.settle()
+    expect(replies(h).at(-1)).toMatchObject({ channel: trigger('2').channel,
+      text: `Your message has reached the worker of ticket ${ticketId.slice(0, 12)} and is being handled.` })
+    receiveAndRoute(h, trigger('3')); fail()
     expect(h.repo.tickets.get(ticketId)!.delivery).toMatchObject({ since: h.repo.tickets.get(ticketId)!.delivery!.at })
+    // A delivery that recovers before the five-minute stalled notice stays silent.
+    h.settle()
+    expect(replies(h)).toHaveLength(2)
   })
   it('stays silent when the executor ends its ticket', () => {
     const h = harness()
@@ -1232,6 +1238,39 @@ describe('replies', () => {
     h.engine.retryTicket(ticketId); h.settle()
     fail()
     expect(h.outbox.filter(message => message.kind === 'reply')).toHaveLength(1)
+  })
+  it('notifies the original requester once when a failed or blocked ticket actually starts running again, and stays quiet on host restart', () => {
+    const h = harness()
+    receiveAndRoute(h, trigger('1', { text: '修复登录问题' })); h.pump()
+    const ticketId = h.decide(h.requests.at(-1)!, { kind: 'accept', title: 'Fix login', scope: 'small', reason: 'requested', acknowledgement: '收到' }).ticketId!
+    // Startup failure while pending: no recovery notice until the relaunched assignment actually starts running.
+    h.engine.report(ticketId, { state: 'failed', summary: 'prepare failed' })
+    expect(replies(h).map(item => item.text)).toEqual([expect.stringContaining('执行失败')])
+    h.engine.retryTicket(ticketId)
+    expect(replies(h)).toHaveLength(1)
+    // If the retry fails before starting, stay quiet about recovery and only report the new failure.
+    h.engine.report(ticketId, { state: 'failed', summary: 'prepare failed again', failureReason: '工作区仍有冲突。' })
+    expect(replies(h)).toHaveLength(2)
+    h.engine.retryTicket(ticketId); h.settle()
+    const runningId = runningAssignment(h.repo.tickets.get(ticketId)!)!.id
+    // Duplicate started callbacks remain idempotent.
+    h.engine.assignmentStarted(ticketId, runningId)
+    expect(replies(h).at(-1)).toMatchObject({ channel: trigger('1').channel, text: `工单 ${ticketId.slice(0, 12)} 已恢复执行，正在继续处理。` })
+    expect(replies(h)).toHaveLength(3)
+    // Blocked -> retried -> started also sends one recovery reply.
+    h.engine.report(ticketId, { state: 'blocked', summary: 'need fix', question: '请先处理依赖' })
+    h.engine.retryTicket(ticketId); h.settle()
+    expect(replies(h).filter(item => item.text.includes('已恢复执行'))).toHaveLength(2)
+    // Host restart recovery stays silent.
+    h.engine.assignmentInterrupted(ticketId, runningAssignment(h.repo.tickets.get(ticketId)!)!.id); h.settle()
+    expect(replies(h).filter(item => item.text.includes('已恢复执行'))).toHaveLength(2)
+    // Relaunching a launch-failed pending assignment via human follow-up also notifies once it starts.
+    const h2 = harness()
+    receiveAndRoute(h2, trigger('1', { text: 'Fix launch' })); h2.pump()
+    const t2 = h2.decide(h2.requests.at(-1)!, { kind: 'accept', title: 'Fix', scope: 'small', reason: 'requested', acknowledgement: 'ok' }).ticketId!
+    h2.engine.report(t2, { state: 'failed', summary: 'prepare failed' })
+    receiveAndRoute(h2, trigger('2', { text: 'Fixed now' })); h2.settle()
+    expect(replies(h2).at(-1)).toMatchObject({ channel: trigger('1').channel, text: `Ticket ${t2.slice(0, 12)} has resumed and is running again.` })
   })
 
   it('acknowledges a person\'s message that reached an open ticket once, and refuses others', () => {

@@ -81,6 +81,16 @@ export class Replies extends EnginePart {
       : `Ticket ${id} failed. ${safe || 'The executor could not finish the task.'} You can retry after resolving the issue.`
     this.options.outbox.send({ id: key('ticket-failure', assignmentId, text), channel: origin.channel, text, kind: 'reply', ticketId: ticket.id })
   }
+  /** Tell the original human request once when a failed or blocked ticket's assignment starts running again. */
+  reportRecovered(ticket: Ticket, assignmentId: string): void {
+    const origin = this.source(ticket)
+    if (!origin?.human || !origin.channel) return
+    const id = ticket.id.slice(0, 12)
+    const text = chinese(origin.text)
+      ? `工单 ${id} 已恢复执行，正在继续处理。`
+      : `Ticket ${id} has resumed and is running again.`
+    this.options.outbox.send({ id: key('ticket-recovered', assignmentId), channel: origin.channel, text, kind: 'reply', ticketId: ticket.id })
+  }
   /** Tell the original human request that a person stopped its ticket; a stopped ticket never resumes, so once per ticket. */
   reportStopped(ticket: Ticket): void {
     const origin = this.source(ticket)
@@ -108,6 +118,25 @@ export class Replies extends EnginePart {
     const text = chinese(trigger.text) ? `你的消息暂未送达工单 ${id} 的执行器，系统仍在自动重试，送达后会继续处理。`
       : `Your message has not reached the worker of ticket ${id} yet. Delivery is still being retried, and work continues once it arrives.`
     this.options.outbox.send({ id: key('delivery-stalled', ticket.id, inputId), channel: trigger.channel, text, kind: 'reply', ticketId: ticket.id })
+  }
+  /**
+   * Tell a person once when a message that previously triggered a stalled-delivery notice finally reaches the worker.
+   * If that stalled notice is still unsent in the outbox, withdraw it instead so neither notice goes out unnecessarily.
+   */
+  reportDeliveryRecovered(ticket: Ticket, inputId: string, triggerId: string): void {
+    const trigger = this.repo.triggers.get(triggerId)
+    if (!trigger?.human || !trigger.channel) return
+    const stalled = key('delivery-stalled', ticket.id, inputId)
+    const status = this.options.outbox.status(stalled)
+    if (!status || status === 'dropped') return
+    if (status === 'pending') {
+      this.options.outbox.withdraw(stalled)
+      if (!this.options.outbox.status(stalled)) return
+    }
+    const id = ticket.id.slice(0, 12)
+    const text = chinese(trigger.text) ? `你的消息已送达工单 ${id} 的执行器，正在继续处理。`
+      : `Your message has reached the worker of ticket ${id} and is being handled.`
+    this.options.outbox.send({ id: key('delivery-recovered', ticket.id, inputId), channel: trigger.channel, text, kind: 'reply', ticketId: ticket.id })
   }
   /** Send the executor's complete question directly to its Feishu recipient. */
   reportAttention(ticket: Ticket, attention: Attention): void {
