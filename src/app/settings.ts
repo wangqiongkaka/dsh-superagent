@@ -1,5 +1,6 @@
 /** Block-scoped settings validation, optimistic concurrency saves, processing pause control, and source policy synchronization. */
 import type { Context } from '@deepseek-ai/cordis'
+import type { ModelSelection } from '@deepseek-ai/dsh-agent'
 import { z } from 'zod'
 import { UserError, type EngineForSettings } from '../core/index.ts'
 import { EvalConfigSchema, ExecutorConfigSchema, PolicyConfigSchema, SettingsSchema, policyEffects, policyVersion } from '../policy.ts'
@@ -67,7 +68,7 @@ export interface SettingsHost {
   readonly context: Context
   readonly lifetime: AbortSignal
   /** Session manager through which the main Session is notified of saved settings. */
-  readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection' | 'harnesses'>
+  readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection' | 'harnesses' | 'applyMasterModel'>
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
   /** Setup state, account/command checks, hot repository updates, and restart trigger when setup-read fields change. */
@@ -163,8 +164,9 @@ export class Settings {
     if (kind === 'source') validateRepositoryBindings(candidate)
     const model = block === 'eval' ? candidate.eval.model : block === 'executor' && candidate.executor.harness === 'dsh' ? candidate.executor.model : null
     const previous = block === 'eval' ? current.eval.model : block === 'executor' ? current.executor.model : null
+    let resolvedModel: ModelSelection | undefined
     if (model && JSON.stringify(model) !== JSON.stringify(previous)) {
-      try { await resolveRoleModel(this.host.context, model) }
+      try { resolvedModel = await resolveRoleModel(this.host.context, model) }
       catch (error) { throw new UserError('modelUnavailable', { block, error: error instanceof Error ? error.message : String(error) }) }
     }
     rules.guard?.(current, candidate, origin)
@@ -227,6 +229,14 @@ export class Settings {
     const changed = blocked.join(' ') !== latestOld.executor.blockedCommands.join(' ')
       || (hotRepositories && blocked.join(' ') !== syncedBlocked.join(' '))
     if (changed) await this.host.setup.blockCommands(blocked)
+    if (!restarting && block === 'eval' && JSON.stringify(latestSettings.eval.model) !== JSON.stringify(latestOld.eval.model)) {
+      const next = latestSettings.eval.model
+      try {
+        await sessions.applyMasterModel(next, next && JSON.stringify(next) === JSON.stringify(model) ? resolvedModel : undefined)
+      } catch (error) {
+        this.host.context.logger?.warn('dsh-superagent could not update the main Session model: %s', String(error))
+      }
+    }
     // When restarting, the notice stays pending until after the restart; `setup.restart()` defers until this call returns.
     const delivery = restarting ? 'pending' : await sessions.delivery(`settings:${block}`)
     if (restarting) this.host.setup.restart()

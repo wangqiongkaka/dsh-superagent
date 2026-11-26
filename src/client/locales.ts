@@ -256,7 +256,7 @@ const TEXT = {
   evalSettings: ['评估设置', 'Eval settings'],
   policyIntro: ['评估依据的规则：接单规则，以及各来源上谁能发起工作。修改会生成新的策略版本，并通知进行中的工单。', 'The rules Eval follows: the accept rules, and who may originate work on each Source. A change makes a new Policy version and notifies open Tickets.'],
   assessorModel: ['研判模型', 'Assessor model'],
-  assessorModelHint: ['主 Session 的模型，负责研判和路由。保存后用于新建的主 Session，已有 Session 保持原选择。', 'Model of the main Session, which assesses and routes. Applies to a newly created main Session; existing Sessions keep their choice.'],
+  assessorModelHint: ['主 Session 的模型，负责研判和路由。修改并保存后会立即同步到当前主 Session（下一轮生效，不修改 DSH 全局默认）；后续在主 Session 聊天框手动切换仍会保留。', 'Model of the main Session, which assesses and routes. Changing and saving updates the current main Session for its next turn without changing the global DSH default; later manual switches in the main Session are preserved.'],
   ruleLabel: ['规则', 'Rules'],
   'decisionFilter.work': ['接单与续做', 'Accept and reopen'],
   'decisionFilter.stop': ['停止', 'Stopped'],

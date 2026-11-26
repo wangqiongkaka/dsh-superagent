@@ -1,6 +1,6 @@
 /** Lifecycle, prompt/tool/skill decoration, message delivery, and budget retry tracking for orchestrator and worker DSH sessions. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Agent, ModelSelection } from '@deepseek-ai/dsh-agent'
 import type { MessageId } from '@deepseek-ai/dsh-llm'
 import { scopeParentOf } from '@deepseek-ai/dsh-scope'
 import type { SessionId } from '@deepseek-ai/dsh-session'
@@ -10,7 +10,7 @@ import { key, liveTicket, latestAssignment, type Ticket } from '../core/index.ts
 import { mandateInstructions, ticketOfSession } from '../executor/dsh.ts'
 import { ExternalTools } from './external-tools.ts'
 import { configurableHarness, HarnessCatalogSchema, harnessOf, harnessOptions } from './harness.ts'
-import type { ExternalHarness, HarnessSelection } from '../policy.ts'
+import type { ExternalHarness, HarnessSelection, RoleModel } from '../policy.ts'
 import type { HealthEntry } from '../infra/health.ts'
 import { scopeWorkerSubprocess } from '../infra/environment.ts'
 import { AgentDelivery, messageId } from './delivery.ts'
@@ -18,7 +18,7 @@ import { Later, type Effects } from './effects.ts'
 import { UserError } from '../core/errors.ts'
 import type { Variable } from './execution-environment.ts'
 import { RetryHealth } from './retry-health.ts'
-import { initializeRoleModel } from './role-models.ts'
+import { applyRoleModel, initializeRoleModel } from './role-models.ts'
 import { bundledSkills } from './skill-files.ts'
 import { SKILL_PREFIX, type PromptVersion, type Prompts } from './prompts.ts'
 import type { Store } from './store.ts'
@@ -237,6 +237,12 @@ export class Sessions {
     }
     await ctx.sessionController.rename({ sessionId: id as SessionId, title })
     return result.agent
+  }
+  /** Switches the live main Session to `model` (or the current DSH default when `null`) for its next request without mutating DSH's global default. */
+  async applyMasterModel(model: RoleModel | null, resolved?: ModelSelection): Promise<void> {
+    const result = await this.ctx.sessionController.resolveAgent(this.host.masterId as SessionId)
+    if ('error' in result) return
+    await applyRoleModel(this.ctx, result.agent, model, resolved)
   }
   /** Returns whether `sessionId` already holds the message delivered under `requestId`, or `false` if the session does not exist. */
   async holds(sessionId: string, requestId: string): Promise<boolean> {

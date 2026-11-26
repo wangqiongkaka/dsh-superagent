@@ -99,3 +99,25 @@ it('records nothing for a pause that changes nothing, refuses a sync while setup
   vi.mocked(Setup.prototype.configured).mockRestore()
   expect(() => settings.block('source:x')).toThrow(new UserError('unknownBlock', { block: 'source:x' }))
 })
+it('syncs the live main Session model when eval.model changes without touching the global default or unchanged saves', async () => {
+  h = await startRuntime()
+  const { settings, store } = h.runtime
+  const master = h.agents.get(h.runtime.masterId)!
+  master.session.append.mockClear()
+  h.controller.selectModel.mockClear()
+  // Saving another eval field leaves the main Session model untouched.
+  const initial = store.settings().eval
+  await settings.save('eval', { ...initial, timeoutSeconds: initial.timeoutSeconds + 10 }, store.blockRevision('eval'), 'panel')
+  expect(master.session.append).not.toHaveBeenCalled()
+  // Changing eval.model appends the new selection to the live main Session without calling selectModel.
+  const next = { provider: 'openai', model: 'gpt-6.1-sol', reasoningEffort: 'high' }
+  await settings.save('eval', { ...store.settings().eval, model: next }, store.blockRevision('eval'), 'panel')
+  expect(master.session.append).toHaveBeenCalledWith('model/selection', next)
+  expect(h.controller.selectModel).not.toHaveBeenCalled()
+  // Clearing eval.model to null switches the main Session back to the current DSH default from modelCatalog.
+  master.session.append.mockClear()
+  Object.assign(h.controller, { modelCatalog: vi.fn(async () => ({ default: { provider: 'deepseek', model: 'v4-flash' }, groups: [] })) })
+  await settings.save('eval', { ...store.settings().eval, model: null }, store.blockRevision('eval'), 'panel')
+  expect(master.session.append).toHaveBeenCalledWith('model/selection', { provider: 'deepseek', model: 'v4-flash' })
+  expect(h.controller.selectModel).not.toHaveBeenCalled()
+})
