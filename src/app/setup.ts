@@ -5,6 +5,7 @@ import { UserError } from '../core/index.ts'
 import { SETUP_FIELDS, resolveDeployment, resolveRepositories, resolveFeishuBot, workerProbe, type Deployment, type Machine } from '../deployment.ts'
 import { agentVariables, verifyEnvironment, withoutDirectory, workerBin, writeEnvironment } from '../infra/environment.ts'
 import type { Settings, SettingsBlock } from '../policy.ts'
+import type { ResolvedRepository } from '../repositories.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
 
 export interface SetupHost {
@@ -15,15 +16,18 @@ export interface SetupHost {
 }
 
 const setupFields = (settings: Settings) =>
-  JSON.stringify([settings.sources.git?.enabled ?? false, ...Object.entries(SETUP_FIELDS).map(([id, keys]) => keys.map(key => settings.sources[id]?.config[key] ?? ''))])
+  JSON.stringify(Object.entries(SETUP_FIELDS).map(([id, keys]) => keys.map(key => settings.sources[id]?.config[key] ?? '')))
 export const setupChanged = (before: Settings, after: Settings): boolean => setupFields(before) !== setupFields(after)
+const gitRepositoryFields = (settings: Settings) => JSON.stringify([settings.sources.git?.enabled ?? false, settings.sources.git?.config.repositories ?? []])
+export const gitRepositoriesChanged = (before: Settings, after: Settings): boolean => gitRepositoryFields(before) !== gitRepositoryFields(after)
 
 /**
  * Resolves the target repository, GitHub account, and optional Feishu bot by probing CLIs, then writes the isolated git and shim environment used by worker processes.
- * `Runtime` runs it at startup to gate orchestration readiness, while `Settings` uses it to validate account changes, update blocked command shims, and schedule restarts.
+ * `Runtime` runs it at startup to gate orchestration readiness, while `Settings` uses it to validate account changes, hot-update Git repositories, update blocked command shims, and schedule restarts.
  */
 export class Setup {
   private resolved?: Deployment
+  private envWrite: Promise<void> = Promise.resolve()
   problem?: SetupProblem
   feishuProblem?: SetupProblem
   /** PATH with the worker shim directory removed so the host's own CLI calls invoke the real binaries. */
@@ -45,6 +49,7 @@ export class Setup {
     return this.resolved
   }
   configured(): boolean { return this.resolved !== undefined }
+  hasLegacyRepository(): boolean { return !!this.resolved?.repository }
   /** Resolve deployment accounts and verify the worker environment, recording `SetupError` failures in `problem`/`feishuProblem` and rethrowing unexpected errors. */
   async run(settings: Settings): Promise<boolean> {
     try { this.resolved = await this.resolve(settings); return true }
@@ -64,13 +69,39 @@ export class Setup {
   /** Verify account CLIs for a modified source block before saving, ignoring setup errors belonging to other blocks. */
   async checkAccounts(block: SettingsBlock, settings: Settings): Promise<void> {
     const { machine } = this.host
-    const check = block === 'source:git' ? resolveRepositories(machine, settings, this.probe())
+    const check = block === 'source:git' ? resolveRepositories(machine, settings, this.probe(), undefined, this.resolved?.repositories ?? [])
       : block === 'source:feishu' ? resolveFeishuBot(machine, settings.sources.feishu?.config, this.probe())
       : resolveDeployment(machine, settings.sources.github?.config, this.probe())
     await check.catch((error: unknown) => { if (!(error instanceof SetupError) || error.place === block.slice(7)) throw error })
   }
+  /** Verify newly added or changed Git repositories before saving, reusing already-verified entries for unchanged repositories. */
+  async checkRepositories(settings: Settings): Promise<ResolvedRepository[]> {
+    return resolveRepositories(this.host.machine, settings, this.probe(), undefined, this.resolved?.repositories ?? [])
+      .catch((error: unknown) => {
+        if (error instanceof SetupError) throw error
+        throw new SetupError('gitRepositoriesFailed', { output: error instanceof Error ? error.message : String(error) })
+      })
+  }
+  /** Atomically write worker shims and gitconfig for `repositories` before committing them to in-memory deployment state. */
+  async syncRepositories(repositories: ResolvedRepository[], blocked: readonly string[]): Promise<void> {
+    if (this.resolved) await this.writeEnv(this.withRepositories(repositories), blocked)
+  }
+  /** Publish verified repositories into the live deployment immediately after the settings transaction commits. */
+  commitRepositories(repositories: ResolvedRepository[]): void {
+    if (this.resolved) this.resolved = this.withRepositories(repositories)
+  }
   async blockCommands(blocked: readonly string[]): Promise<void> {
-    if (this.resolved) await writeEnvironment(this.resolved, blocked)
+    if (this.resolved) await this.writeEnv(this.resolved, blocked)
+  }
+  private withRepositories(repositories: ResolvedRepository[]): Deployment {
+    const { repositories: _previous, ...base } = this.resolved!
+    return { ...base, ...(repositories.length ? { repositories } : {}) }
+  }
+  /** Serializes writes to worker shims and gitconfig so concurrent settings saves cannot collide on temporary files. */
+  private writeEnv(deployment: Deployment, blocked: readonly string[]): Promise<void> {
+    const next = this.envWrite.catch(() => {}).then(() => writeEnvironment(deployment, blocked))
+    this.envWrite = next.catch(() => {})
+    return next
   }
   /** Probes CLIs the way worker shells run them, using `stateDir` as `cwd` since it exists even before the repository clone is valid. */
   private probe() {

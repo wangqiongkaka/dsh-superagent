@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { RepositorySchema, RepositoryListSchema, availableRepositories, selectRepositories, validateRepositoryBindings } from '../src/repositories.ts'
 import { SettingsSchema } from '../src/policy.ts'
@@ -5,6 +6,7 @@ import { feishu, startRuntime } from './fixtures/host.ts'
 import { forgeThread, gitKind } from '../src/sources/git.ts'
 import { ForgeApi, type ForgeTopic } from '../src/sources/forge-api.ts'
 import { ticketEnvironment } from '../src/app/execution-environment.ts'
+import { workerGitConfig } from '../src/infra/environment.ts'
 import { SourceRegistry } from '../src/sources/registry.ts'
 import { testDeployment } from './fixtures/deployment.ts'
 import type { Ticket } from '../src/core/index.ts'
@@ -111,5 +113,54 @@ describe('repository bindings', () => {
     expect(JSON.parse(variables.find(item => item.key === 'DSH_SUPERAGENT_REPOSITORIES')!.value)).toEqual([{ ...resolved, directory: '/tmp/work/fix/backend' }])
     deployment.repositories = [{ ...resolved, url: 'https://other.local/team/backend' }]
     expect(() => ticketEnvironment({ deployment, sources, settings: config, ticket })).toThrow('changed or was disabled')
+  })
+  it('hot-reloads added and edited Git repositories without restarting, reuses verified entries, and keeps panel-only guard', async () => {
+    const host = await startRuntime()
+    try {
+      host.runtime.sources.register(gitKind)
+      const saveGit = (repositories: Record<string, unknown>[], enabled = true, origin: 'panel' | 'tool' = 'panel') =>
+        host.runtime.settings.save('source:git', { enabled, config: { ...host.runtime.store.settings().sources.git!.config, repositories } },
+          host.runtime.store.blockRevision('source:git'), origin)
+      const existing = { id: 'service', provider: 'github', url: 'https://github.com/acme/service', cli: host.AGENT }
+      const added = { id: 'packages', provider: 'github', url: 'https://github.com/acme/packages', cli: host.AGENT }
+      // Non-panel callers remain blocked from changing Git repositories or toggling the Git source.
+      await expect(saveGit([existing, added], true, 'tool')).rejects.toThrow('can only be changed in the management panel')
+      // Invalid access fails before saving and leaves live repositories and worker-gitconfig unchanged.
+      host.answers[`${host.AGENT} api repos/acme/packages --jq {name: .full_name, push: .permissions.push}`] = '{"name":"acme/packages","push":false}\n'
+      await expect(saveGit([existing, added])).rejects.toMatchObject({ code: 'repositoryReadOnly' })
+      expect(host.runtime.deployment.repositories?.map(repo => repo.id)).toEqual(['service'])
+      expect(readFileSync(workerGitConfig(host.directory), 'utf8')).not.toContain('https://github.com/acme/packages')
+      // Valid addition probes only the new repository and updates deployment and worker-gitconfig without restarting.
+      host.answers[`${host.AGENT} api repos/acme/packages --jq {name: .full_name, push: .permissions.push}`] = '{"name":"acme/packages","push":true}\n'
+      host.answers[`${host.AGENT} api repos/acme/packages`] = '{"default_branch":"main"}'
+      host.subprocess.spawn.mockClear()
+      expect(await saveGit([existing, added])).toMatchObject({ saved: true, restarting: false })
+      expect(host.restarts).not.toHaveBeenCalled()
+      expect(host.runtime.deployment.repositories?.map(repo => ({ id: repo.id, defaultBranch: repo.defaultBranch })))
+        .toEqual([{ id: 'service', defaultBranch: 'main' }, { id: 'packages', defaultBranch: 'main' }])
+      expect(readFileSync(workerGitConfig(host.directory), 'utf8')).toContain('[credential "https://github.com/acme/packages"]')
+      const probed = host.subprocess.spawn.mock.calls.map(([spec]) => (spec as { argv: string[] }).argv.join(' '))
+      expect(probed.some(cmd => cmd.includes('repos/acme/packages'))).toBe(true)
+      expect(probed.some(cmd => cmd.includes('repos/acme/service'))).toBe(false)
+      // Editing only localPath reuses verified repository metadata with zero subprocess probes and no restart.
+      host.subprocess.spawn.mockClear()
+      expect(await saveGit([existing, { ...added, localPath: '/tmp/packages' }])).toMatchObject({ saved: true, restarting: false })
+      expect(host.subprocess.spawn).not.toHaveBeenCalled()
+      expect(host.runtime.deployment.repositories?.find(repo => repo.id === 'packages')?.localPath).toBe('/tmp/packages')
+      expect(host.restarts).not.toHaveBeenCalled()
+    } finally { await host.stop() }
+  })
+  it('still restarts when disabling the Git source leaves a git-only installation with no configured repository', async () => {
+    const host = await startRuntime(store => {
+      const current = store.settings()
+      store.saveSettings({ ...current, sources: { ...current.sources, github: { enabled: false, config: {} } } })
+    })
+    try {
+      host.runtime.sources.register(gitKind)
+      const saveGit = (enabled: boolean) => host.runtime.settings.save('source:git',
+        { enabled, config: host.runtime.store.settings().sources.git!.config }, host.runtime.store.blockRevision('source:git'), 'panel')
+      expect(await saveGit(false)).toMatchObject({ saved: true, restarting: true })
+      await vi.waitFor(() => expect(host.restarts).toHaveBeenCalledTimes(1))
+    } finally { await host.stop() }
   })
 })

@@ -50,7 +50,7 @@ export const GithubAccountsSchema = z.object({
 })
 export const FeishuBotSchema = z.object({ cli: z.string().trim().default('') })
 /** Source configuration keys that affect deployment setup and trigger a restart when changed. */
-export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape), git: ['repositories'] }
+export const SETUP_FIELDS: Readonly<Record<string, readonly string[]>> = { github: Object.keys(GithubAccountsSchema.shape), feishu: Object.keys(FeishuBotSchema.shape) }
 
 export interface Deployment extends Machine {
   repositories?: ResolvedRepository[]
@@ -59,10 +59,18 @@ export interface Deployment extends Machine {
   feishu?: FeishuBot
 }
 
-export async function resolveRepositories(machine: Machine, settings: Settings, probe: Probe, path = process.env.PATH ?? ''): Promise<ResolvedRepository[]> {
+export async function resolveRepositories(machine: Machine, settings: Settings, probe: Probe, path = process.env.PATH ?? '',
+  existing: readonly ResolvedRepository[] = []): Promise<ResolvedRepository[]> {
   const resolved: ResolvedRepository[] = []
   for (const repository of repositoryCatalog(settings)) {
     const cli = executable(repository.cli, path, workerBin(machine.stateDir))
+    const reusable = existing.find(item => item.id === repository.id && item.provider === repository.provider
+      && item.url === repository.url && item.cli === cli)
+    if (reusable) {
+      resolved.push({ ...repository, cli, login: reusable.login, email: reusable.email,
+        ...(reusable.projectId !== undefined ? { projectId: reusable.projectId } : {}), defaultBranch: reusable.defaultBranch })
+      continue
+    }
     const url = new URL(repository.url)
     const project = url.pathname.slice(1)
     if (repository.provider === 'github') {

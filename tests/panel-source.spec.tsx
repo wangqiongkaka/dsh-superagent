@@ -383,6 +383,8 @@ it('selects an added Git repository and returns to the previous one after deleti
   expect(tabs()).toHaveLength(3)
   expect(rows[0]!.hidden).toBe(true)
   expect(rows[2]!.hidden).toBe(false)
+  // Adding a Git repository applies without restarting, so running Assignments are not warned of interruption.
+  expect(card().textContent).not.toContain('保存会重启 dsh-superagent')
   // The last button of a row is its remover; the column hints render buttons too.
   await click([...rows[2]!.querySelectorAll('button')].at(-1)!)
   expect(tabs()).toHaveLength(2)

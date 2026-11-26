@@ -10,10 +10,10 @@ import type { SourceRegistry } from '../sources/registry.ts'
 import { resolveRoleModel } from './role-models.ts'
 import { changedPaths, settingsNotice } from './notices.ts'
 import type { Sessions } from './sessions.ts'
-import { setupChanged, type Setup } from './setup.ts'
+import { gitRepositoriesChanged, setupChanged, type Setup } from './setup.ts'
 import type { Store } from './store.ts'
 import { KV } from '../kv.ts'
-import { validateRepositoryBindings } from '../repositories.ts'
+import { validateRepositoryBindings, type ResolvedRepository } from '../repositories.ts'
 
 /**
  * Indicates an optimistic concurrency conflict when saving or syncing a settings block against a stale revision.
@@ -50,14 +50,14 @@ const BLOCKS: Record<'policy' | 'eval' | 'executor' | 'source', Block> = {
   source: {
     parse: (value, sources, id) => sources.validate(id, z.object({ enabled: z.boolean(), config: z.unknown() }).parse(value)),
     merge: (settings, value, id) => ({ ...settings, sources: { ...settings.sources, [id]: value as SettingsValue['sources'][string] } }),
-    // Only the management panel may switch source accounts.
-    guard: (current, candidate, origin) => { if (origin !== 'panel' && (setupChanged(current, candidate) || repositoryBindings(current) !== repositoryBindings(candidate))) throw new UserError('panelOnlyAccounts') },
+    // Only the management panel may switch source accounts or Git repositories.
+    guard: (current, candidate, origin) => { if (origin !== 'panel' && (setupChanged(current, candidate) || gitRepositoriesChanged(current, candidate) || repositoryBindings(current) !== repositoryBindings(candidate))) throw new UserError('panelOnlyAccounts') },
   },
 }
 
 /** Host dependencies used by `Settings`. */
 export interface SettingsHost {
-  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'tickets' | 'get'>
+  readonly store: Pick<Store, 'settings' | 'saveSettings' | 'blockRevision' | 'atomic' | 'afterCommit' | 'tickets' | 'get'>
   readonly sources: SourceRegistry
   /** Notified when a settings save changes the policy version. */
   readonly engine: EngineForSettings
@@ -70,8 +70,8 @@ export interface SettingsHost {
   readonly sessions: Pick<Sessions, 'notify' | 'delivery' | 'validateSelection' | 'harnesses'>
   /** Source host passed to source kinds' policy syncs and label refreshes. */
   readonly sourceHost: SourceHost
-  /** Setup state, account/command checks, and restart trigger when setup-read fields change. */
-  readonly setup: Pick<Setup, 'configured' | 'checkAccounts' | 'blockCommands' | 'restart'>
+  /** Setup state, account/command checks, hot repository updates, and restart trigger when setup-read fields change. */
+  readonly setup: Pick<Setup, 'configured' | 'hasLegacyRepository' | 'checkAccounts' | 'checkRepositories' | 'syncRepositories' | 'commitRepositories' | 'blockCommands' | 'restart'>
   /** Triggers an immediate pass so work newly allowed by a settings save runs right away. */
   requestPass(): void
 }
@@ -184,6 +184,8 @@ export class Settings {
       }
     }
     if (setupChanged(current, candidate)) await this.host.setup.checkAccounts(block, candidate)
+    let resolvedRepos: ResolvedRepository[] | undefined
+    if (gitRepositoriesChanged(current, candidate)) resolvedRepos = await this.host.setup.checkRepositories(candidate)
     if (stale()) throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
     // Re-read current settings after async checks in case unrelated blocks were saved concurrently.
     const old = store.settings()
@@ -193,20 +195,37 @@ export class Settings {
       const delivery = await sessions.delivery(`settings:${block}`)
       return { saved: true, revision: store.blockRevision(block), policy_changed: false, restarting: false, context_delivery: delivery }
     }
-    const restarting = setupChanged(old, settings) || !this.host.setup.configured()
-    const before = policyVersion(old), after = policyVersion(settings)
+    const gitChanged = gitRepositoriesChanged(old, settings)
+    // Restart only when disabling/removing the last Git repository leaves the installation with no configured repository at all.
+    const needsRestartForGit = gitChanged && resolvedRepos !== undefined && resolvedRepos.length === 0 && !this.host.setup.hasLegacyRepository()
+    const restarting = setupChanged(old, settings) || !this.host.setup.configured() || needsRestartForGit
+    const hotRepositories = !restarting && gitChanged ? resolvedRepos : undefined
+    let syncedBlocked = settings.executor.blockedCommands
+    if (hotRepositories) {
+      await this.host.setup.syncRepositories(hotRepositories, syncedBlocked)
+      if (stale()) {
+        await this.host.setup.blockCommands(store.settings().executor.blockedCommands).catch(() => {})
+        throw new SettingsConflict('Settings changed during the checks. Reload before saving.')
+      }
+    }
+    const latestOld = hotRepositories ? store.settings() : old
+    const latestSettings = hotRepositories ? rules.merge(latestOld, parsed, id) : settings
+    if (hotRepositories) validateRepositoryBindings(latestSettings)
+    const before = policyVersion(latestOld), after = policyVersion(latestSettings)
     const scope = (version: SettingsValue) => ({
       scope: (input: { source: string; meta: Record<string, unknown> }) => this.host.sources.scope(input, version) })
-    const effects = before === after ? new Map() : policyEffects(store.tickets.open(), old, SettingsSchema.parse(settings), scope)
+    const effects = before === after ? new Map() : policyEffects(store.tickets.open(), latestOld, SettingsSchema.parse(latestSettings), scope)
     const notified = [...effects.keys()]
     store.atomic(() => {
-      store.saveSettings(SettingsSchema.parse(settings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified })
-      if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(old, settings)))
+      store.saveSettings(SettingsSchema.parse(latestSettings), { source: origin, block, policyVersion: after, policyChanged: before !== after, notified })
+      if (hotRepositories) store.afterCommit(() => { this.host.setup.commitRepositories(hotRepositories) })
+      if (origin !== 'tool') sessions.notify(...settingsNotice(block, changedPaths(latestOld, latestSettings)))
       if (before !== after) engine.policyChanged(before, after, effects)
     })
-    // Rewrite worker command shims immediately when `blockedCommands` changes.
-    const blocked = settings.executor.blockedCommands
-    const changed = blocked.join(' ') !== old.executor.blockedCommands.join(' ')
+    // Rewrite worker command shims immediately when `blockedCommands` changes (or changed concurrently during repository sync).
+    const blocked = latestSettings.executor.blockedCommands
+    const changed = blocked.join(' ') !== latestOld.executor.blockedCommands.join(' ')
+      || (hotRepositories && blocked.join(' ') !== syncedBlocked.join(' '))
     if (changed) await this.host.setup.blockCommands(blocked)
     // When restarting, the notice stays pending until after the restart; `setup.restart()` defers until this call returns.
     const delivery = restarting ? 'pending' : await sessions.delivery(`settings:${block}`)
