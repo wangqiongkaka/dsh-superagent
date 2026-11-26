@@ -244,40 +244,4 @@ describe('overrides of built-in parts', () => {
         + `工单目录的准备命令读取相同变量：\n${ENVIRONMENT_LINE}`)
     })
   })
-  it('follows updated disk defaults for unedited team sections while preserving customized ones and legacy databases', () => {
-    withStore(store => {
-      const defaults = { communication: 'Default comm v1', scope: 'Default scope v1', delivery: 'Default delivery v1' }
-      const make = () => new Prompts(store, () => 100000, variables, () => true, () => ({ ...defaults }))
-      // Save a revision that only edits scope and leaves communication and delivery at default.
-      const saved = make().save({ ...defaults, scope: 'Custom scope', skills: {} }, 0, 'panel')
-      expect(saved.config).toEqual({ communication: 'Default comm v1', scope: 'Custom scope', delivery: 'Default delivery v1', skills: {} })
-      // Simulate upgrading packaged prompts/team/delivery.md on disk and restarting the plugin.
-      defaults.delivery = 'Default delivery v2 (agent-assets)'
-      const afterUpgrade = make()
-      expect(afterUpgrade.current().config).toEqual({ communication: 'Default comm v1', scope: 'Custom scope', delivery: 'Default delivery v2 (agent-assets)', skills: {} })
-      // Editing communication later records only communication in history (not delivery).
-      const next = afterUpgrade.save({ ...afterUpgrade.current().config, communication: 'Custom comm' }, 1, 'panel')
-      expect(afterUpgrade.history(0, 1).revisions[0]!.changed).toEqual(['communication'])
-      // Resetting scope back to default makes it follow future default updates again.
-      afterUpgrade.save({ ...next.config, scope: defaults.scope }, 2, 'panel')
-      defaults.scope = 'Default scope v2'
-      expect(make().current().config.scope).toBe('Default scope v2')
-      // Explicitly emptying delivery to '' is treated as a customization and stays empty across upgrades.
-      make().save({ ...make().current().config, delivery: '' }, 3, 'panel')
-      defaults.delivery = 'Default delivery v3'
-      expect(make().current().config.delivery).toBe('')
-    })
-    withStore(store => {
-      // Legacy database saved before teamCustom existed: version 0 holds the original defaults, version 1 edited only scope.
-      const v0 = { communication: 'Old comm', scope: 'Old scope', delivery: 'Old delivery', skills: {} }
-      const v1 = { communication: 'Old comm', scope: 'My custom scope', delivery: 'Old delivery', skills: {} }
-      store.set(KV.prompts.version(0), { revision: 0, previousRevision: null, savedAt: '', source: 'defaults', config: v0 })
-      store.set(KV.prompts.version(1), { revision: 1, previousRevision: 0, savedAt: '2026-11-25T00:00:00Z', source: 'panel', config: v1 })
-      store.set(KV.prompts.revision, 1)
-      const live = { communication: 'Old comm', scope: 'Old scope', delivery: 'New delivery from disk' }
-      const upgraded = new Prompts(store, () => 100000, variables, () => true, () => live)
-      expect(upgraded.current().config).toEqual({ communication: 'Old comm', scope: 'My custom scope', delivery: 'New delivery from disk', skills: {} })
-      expect(upgraded.history(0, 1).revisions[0]!.changed).toEqual(['scope'])
-    })
-  })
 })

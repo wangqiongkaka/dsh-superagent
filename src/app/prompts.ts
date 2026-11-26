@@ -128,47 +128,15 @@ export interface DefaultChange { part: string; base?: string; previous?: string;
  * Thrown by `Prompts.save` and translated into an HTTP 409 response by the management routes.
  */
 export class PromptConflict extends Error {}
-/** Stored version shape; `teamCustom` stays internal so API/tool PromptVersion shapes stay unchanged. */
-type StoredPromptVersion = PromptVersion & { teamCustom?: TeamSection[] }
-
 /**
  * Stores numbered prompt configurations in `Store` via `Versions` and composes role system prompts and skills with the execution environment.
  * `Sessions` reads the composed prompts and skills for orchestrator and worker runs, while management routes and tools validate, preview, and save revisions through it.
  */
 export class Prompts {
-  private readonly versions: Versions<StoredPromptVersion>
-  private readonly team: () => Record<TeamSection, string>
+  private readonly versions: Versions<PromptVersion>
   constructor(private readonly store: Store, private readonly maxChars: () => number, private readonly environment: () => Variable[] | undefined,
-    private readonly feishu: () => boolean, team: () => Record<TeamSection, string> = () => teamDefaults) {
+    private readonly feishu: () => boolean) {
     this.versions = new Versions(store, KV.prompts.revision, KV.prompts.version)
-    this.team = team
-  }
-  private defaultConfig(): PromptConfig { return { ...this.team(), skills: {} } }
-  /**
-   * Returns which team sections were explicitly customized in `version`.
-   * New saves record `teamCustom`; legacy revisions saved before it existed infer unedited sections by matching the recorded initial defaults (revision 0).
-   */
-  private customTeam(version: StoredPromptVersion): Set<TeamSection> {
-    if (version.revision === 0) return new Set()
-    if (version.teamCustom !== undefined) return new Set(version.teamCustom)
-    const initial = this.versions.get(0)?.config, live = this.team()
-    return new Set(TEAM_SECTIONS.filter(section => {
-      const text = version.config[section]
-      if (text === live[section]) return false
-      return initial ? text !== initial[section] : true
-    }))
-  }
-  /** Hydrates unedited team sections from the current packaged defaults and strips internal storage metadata. */
-  private hydrate(version: StoredPromptVersion): PromptVersion {
-    const { teamCustom: _ignored, ...rest } = version
-    const custom = this.customTeam(version), live = this.team()
-    const config: PromptConfig = {
-      ...rest.config,
-      communication: custom.has('communication') ? rest.config.communication : live.communication,
-      scope: custom.has('scope') ? rest.config.scope : live.scope,
-      delivery: custom.has('delivery') ? rest.config.delivery : live.delivery,
-    }
-    return { ...rest, config }
   }
   /** A role's prompt; the main Session's Policy section follows the settings as they are now, at each model request. */
   compose(config: PromptConfig, role: Role, variables = this.environment()): string {
@@ -180,14 +148,13 @@ export class Prompts {
   }
   current(): PromptVersion {
     const revision = this.versions.revision()
-    return revision ? this.version(revision) : { revision: 0, previousRevision: null, savedAt: '', source: 'defaults', config: this.defaultConfig() }
+    return revision ? this.version(revision) : { revision: 0, previousRevision: null, savedAt: '', source: 'defaults', config: defaultPrompts() }
   }
   /** Reads a revision by number; revision 0 resolves to built-in defaults before the first save persists it. */
   version(revision: number): PromptVersion {
-    const stored = this.versions.get(revision)
-    if (stored) return this.hydrate(stored)
-    if (revision === 0 && this.versions.revision() === 0) return this.current()
-    throw new UserError('unknownPromptRevision', { revision: String(revision) })
+    const version = this.versions.get(revision) ?? (revision === 0 && this.versions.revision() === 0 ? this.current() : undefined)
+    if (!version) throw new UserError('unknownPromptRevision', { revision: String(revision) })
+    return version
   }
   /**
    * Parse a configuration: an override names a built-in part, holds text and keeps its template's placeholders, and records the
@@ -238,15 +205,13 @@ export class Prompts {
       const previous = this.current()
       if (previous.revision !== baseRevision) throw new PromptConflict(`Prompt version changed to ${previous.revision}; compare the latest version before saving`)
       // Persist the built-in defaults as revision 0 before recording the first custom revision.
-      if (previous.revision === 0 && !this.versions.get(0)) this.versions.keep({ ...previous, teamCustom: [] })
+      if (previous.revision === 0 && !this.versions.get(0)) this.versions.keep(previous)
       // The built-in text each override was edited from, kept to show what an upgrade changed in it.
       for (const [part, { base }] of Object.entries(config.overrides ?? {})) {
         const text = builtInParts()[part as PartKey].text
         if (base === builtInBase(text) && this.store.get(KV.prompts.builtIn(base)) === undefined) this.store.set(KV.prompts.builtIn(base), text)
       }
-      const live = this.team()
-      const teamCustom = TEAM_SECTIONS.filter(section => config[section] !== live[section])
-      return this.hydrate(this.versions.save(revision => ({ revision, previousRevision: previous.revision, savedAt: new Date().toISOString(), source, config, teamCustom })))
+      return this.versions.save(revision => ({ revision, previousRevision: previous.revision, savedAt: new Date().toISOString(), source, config }))
     })
   }
   history(offset = 0, limit = 20) {
@@ -254,10 +219,9 @@ export class Prompts {
     const revisions = Array.from({ length: Math.min(limit, Math.max(0, current.revision + 1 - offset)) }, (_, i) => {
       const version = current.revision - offset - i === 0 && current.revision === 0 ? current : this.version(current.revision - offset - i)
       const { config, ...summary } = version
-      const rawPrevious = version.previousRevision === null ? undefined : this.versions.get(version.previousRevision)
-      const previous = rawPrevious ? this.hydrate(rawPrevious).config : undefined
+      const previous = version.previousRevision === null ? undefined : this.versions.get(version.previousRevision)?.config
       // Pre-team-section revisions are not comparable field-by-field.
-      const legacy = version.legacy || (version.previousRevision !== null && rawPrevious?.legacy)
+      const legacy = version.legacy || (version.previousRevision !== null && this.versions.get(version.previousRevision)?.legacy)
       if (legacy) return { ...summary, changed: ['legacy'] }
       const entries = (value: PromptConfig) => ({ communication: value.communication, scope: value.scope, delivery: value.delivery,
         ...Object.fromEntries(Object.entries(value.skills).map(([name, text]) => ['skill/' + name, text])),
